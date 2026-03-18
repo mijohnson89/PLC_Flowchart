@@ -837,7 +837,12 @@ export function PrintReportModal({ onClose }: Props) {
     style.textContent = `
       @media print {
         #root { display: none !important; }
-        #__plc_report__ { display: block !important; }
+        #__plc_report__ {
+          position: static !important;
+          left: 0 !important;
+          width: auto !important;
+          overflow: visible !important;
+        }
       }
     `
     document.head.appendChild(style)
@@ -845,8 +850,21 @@ export function PrintReportModal({ onClose }: Props) {
     setTimeout(() => document.getElementById('__plc_print_style__')?.remove(), 4000)
   }
 
+  // Visually hidden but NOT display:none — Chromium's print engine skips
+  // re-layout of display:none elements so we keep it in the layout tree,
+  // just moved far off screen.  The @media print CSS below brings it back.
   const reportPortal = createPortal(
-    <div id="__plc_report__" style={{ display: 'none' }}>
+    <div
+      id="__plc_report__"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: '-9999px',
+        width: '210mm',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+      }}
+    >
       <ReportDocument options={options} />
     </div>,
     document.body
