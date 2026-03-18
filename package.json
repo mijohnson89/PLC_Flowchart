@@ -1,0 +1,50 @@
+{
+  "name": "plc-uml-generator",
+  "version": "1.0.0",
+  "description": "PLC Flowchart and UML Diagram Generator for Studio 5000",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "build:win": "npm run build && electron-builder --win --config"
+  },
+  "build": {
+    "appId": "com.plc.uml-generator",
+    "productName": "PLC UML Generator",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "out/**/*"
+    ]
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "postcss": "^8.5.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.10.1",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.577.0",
+    "zustand": "^5.0.12"
+  }
+}

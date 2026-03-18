@@ -1,0 +1,17 @@
+import type { NodeProps } from '@xyflow/react'
+import type { PLCNodeData } from '../../types'
+import { BaseNode } from './BaseNode'
+
+export function EndNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
+  const d = data as PLCNodeData
+  return (
+    <BaseNode
+      color={d.color ?? '#DC2626'}
+      typeLabel="End"
+      selected={selected}
+      label={d.label || 'End'}
+      sublabel={d.description}
+      noSource
+    />
+  )
+}

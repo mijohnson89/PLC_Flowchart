@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@layer components {
+  .toolbar-btn {
+    @apply p-2 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors flex items-center justify-center;
+  }
+}
+
+@source "../../**/*.{tsx,ts,html}";
+
+/* React Flow overrides */
+.react-flow__node {
+  cursor: grab;
+}
+.react-flow__node:active {
+  cursor: grabbing;
+}
+/* Default pane cursor — right-drag pans */
+.react-flow__pane {
+  cursor: default;
+}
+.react-flow__pane.dragging {
+  cursor: grabbing;
+}
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  border: 2px solid white;
+  transition: background 0.15s, transform 0.15s, opacity 0.15s;
+}
+.react-flow__handle:hover {
+  background: #3b82f6;
+  transform: scale(1.5);
+}
+
+/* ── Print / Print-to-PDF ────────────────────────────────────────────────── */
+@media print {
+  /* Hide all app chrome — toolbar, tab bar, sidebars */
+  header,
+  [data-print-hide],
+  aside {
+    display: none !important;
+  }
+
+  /* Hide React Flow UI overlays */
+  .react-flow__controls,
+  .react-flow__minimap,
+  .react-flow__panel,
+  [data-export-skip="true"] {
+    display: none !important;
+  }
+
+  /* Reset full-page layout so canvas fills the sheet */
+  html, body, #root {
+    height: 100vh !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Make the root flex column fill the page */
+  #root > div {
+    height: 100vh !important;
+    overflow: hidden !important;
+  }
+
+  /* Canvas <main> fills remaining space */
+  main {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+  }
+
+  /* React Flow fills the main area */
+  .react-flow,
+  .react-flow__renderer,
+  .react-flow__pane {
+    width: 100% !important;
+    height: 100% !important;
+  }
+}
+
+/* ── Connect Mode ────────────────────────────────────────────────────────── */
+.connect-mode .react-flow__node {
+  cursor: crosshair;
+}
+/* Always show all handles when connect mode is active */
+.connect-mode .react-flow__handle {
+  opacity: 1 !important;
+  width: 11px !important;
+  height: 11px !important;
+  background: #f59e0b !important;
+  border-color: white !important;
+  transform: scale(1);
+}
+.connect-mode .react-flow__handle:hover {
+  background: #d97706 !important;
+  transform: scale(1.5) !important;
+}
+/* Disable panning cursor in connect mode */
+.connect-mode .react-flow__pane {
+  cursor: default;
+}
