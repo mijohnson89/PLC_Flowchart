@@ -48,6 +48,7 @@ function buildMenu(win: BrowserWindow): void {
         { label: 'Export as PDF',   click: () => win.webContents.send('menu-export-pdf') },
         { type: 'separator' },
         { label: 'Print to PDF…', accelerator: 'CmdOrCtrl+P', click: () => win.webContents.send('menu-print-pdf') },
+        { label: 'Print Report…', accelerator: 'CmdOrCtrl+Shift+P', click: () => win.webContents.send('menu-print-report') },
         { type: 'separator' },
         { role: 'quit' }
       ]

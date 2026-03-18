@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, FolderOpen, Save, Download, Undo2, Redo2, Network, ChevronDown, Pencil, History } from 'lucide-react'
+import { FileText, FolderOpen, Save, Download, Undo2, Redo2, Network, ChevronDown, Pencil, History, BookOpen } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
+import { PrintReportModal } from './PrintReportModal'
 
 interface ToolbarProps {
   exportRef: React.MutableRefObject<{
@@ -22,6 +23,7 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(projectName)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [showPrintReport, setShowPrintReport] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
 
   function handlePrintPdf() {
@@ -58,6 +60,7 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
       window.api.onMenu('menu-export-svg', () => exportRef.current?.exportSvg()),
       window.api.onMenu('menu-export-pdf', () => exportRef.current?.exportPdf?.()),
       window.api.onMenu('menu-print-pdf',  handlePrintPdf),
+      window.api.onMenu('menu-print-report', () => setShowPrintReport(true)),
       window.api.onMenu('menu-undo', undo),
       window.api.onMenu('menu-redo', redo)
     ]
@@ -98,6 +101,7 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
   }
 
   return (
+  <>
     <header className="h-12 flex items-center gap-1 px-3 bg-white border-b border-gray-200 flex-shrink-0 shadow-sm">
       {/* Branding */}
       <div className="flex items-center gap-2 mr-3 pr-3 border-r border-gray-200">
@@ -151,6 +155,12 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
               <span>Print to PDF…</span>
               <span className="text-[9px] text-gray-400 font-normal">Ctrl+P</span>
             </button>
+            <div className="h-px bg-gray-100 my-1" />
+            <button className="w-full text-left text-xs px-3 py-2 hover:bg-indigo-50 text-indigo-700 font-medium flex items-center gap-2"
+              onClick={() => { setShowPrintReport(true); setExportMenuOpen(false) }}>
+              <BookOpen size={13} />
+              <span>Print Report…</span>
+            </button>
           </div>
         )}
       </div>
@@ -192,5 +202,8 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
         )}
       </div>
     </header>
+
+    {showPrintReport && <PrintReportModal onClose={() => setShowPrintReport(false)} />}
+  </>
   )
 }
