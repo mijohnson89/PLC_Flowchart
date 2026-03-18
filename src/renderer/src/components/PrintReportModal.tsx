@@ -797,7 +797,7 @@ interface Props {
 }
 
 export function PrintReportModal({ onClose }: Props) {
-  const { tabs, userInterfaces, interfaceInstances, plants } = useDiagramStore()
+  const { projectName, tabs, userInterfaces, interfaceInstances, plants } = useDiagramStore()
 
   const flowchartTabs = tabs.filter((t) => t.type === 'flowchart')
   const sequenceTabs = tabs.filter((t) => t.type === 'sequence')
@@ -832,27 +832,44 @@ export function PrintReportModal({ onClose }: Props) {
   }
 
   function handlePrint() {
-    const style = document.createElement('style')
-    style.id = '__plc_print_style__'
-    style.textContent = `
-      @media print {
-        #root { display: none !important; }
-        #__plc_report__ {
-          position: static !important;
-          left: 0 !important;
-          width: auto !important;
-          overflow: visible !important;
-        }
-      }
-    `
-    document.head.appendChild(style)
-    window.print()
-    setTimeout(() => document.getElementById('__plc_print_style__')?.remove(), 4000)
+    const reportEl = document.getElementById('__plc_report__')
+    if (!reportEl) return
+
+    // Open a clean popup containing only the report HTML, then print from it.
+    // This is the most reliable approach in Chromium — no @media print tricks,
+    // no page-break suppression from overflow:hidden ancestors.
+    const win = window.open('', '_blank', 'width=1000,height=800')
+    if (!win) return
+
+    win.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>${projectName} — Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #111; }
+    @page { margin: 15mm; size: A4 portrait; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  ${reportEl.innerHTML}
+</body>
+</html>`)
+    win.document.close()
+    // Give the browser a tick to finish layout before showing the print dialog
+    setTimeout(() => {
+      win.focus()
+      win.print()
+      win.close()
+    }, 250)
   }
 
-  // Visually hidden but NOT display:none — Chromium's print engine skips
-  // re-layout of display:none elements so we keep it in the layout tree,
-  // just moved far off screen.  The @media print CSS below brings it back.
+  // Render the report off-screen (no display:none, no overflow:hidden — both
+  // suppress page-break computation in Chromium's layout engine).
   const reportPortal = createPortal(
     <div
       id="__plc_report__"
@@ -861,7 +878,6 @@ export function PrintReportModal({ onClose }: Props) {
         top: 0,
         left: '-9999px',
         width: '210mm',
-        overflow: 'hidden',
         pointerEvents: 'none',
       }}
     >
