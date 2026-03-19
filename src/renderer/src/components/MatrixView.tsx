@@ -506,20 +506,30 @@ function InstanceSidebar({
 
 // ── MatrixView ────────────────────────────────────────────────────────────────
 
-export function MatrixView() {
+interface MatrixViewProps {
+  /** When provided, locks the matrix to this flowchart tab and hides the tab selector. */
+  tabId?: string
+}
+
+export function MatrixView({ tabId }: MatrixViewProps = {}) {
   const { tabs, userInterfaces, interfaceInstances, matrixData, setMatrixCell } = useDiagramStore()
 
   const flowchartTabs = useMemo(() => tabs.filter((t) => t.type === 'flowchart'), [tabs])
 
-  const [selectedTabId, setSelectedTabId] = useState<string>(() => flowchartTabs[0]?.id ?? '')
+  const [internalTabId, setInternalTabId] = useState<string>(() => flowchartTabs[0]?.id ?? '')
   // Per-flowchart-tab: set of instance IDs to hide
   const [hiddenByTab, setHiddenByTab] = useState<Record<string, string[]>>({})
 
-  // Keep selection valid when tabs change
+  // When a tabId prop is provided, use it; otherwise fall back to internal selection
+  const selectedTabId = tabId ?? internalTabId
+  const setSelectedTabId = tabId ? () => {} : setInternalTabId
+
+  // Keep selection valid when tabs change (only relevant in standalone mode)
   useEffect(() => {
-    if (selectedTabId && flowchartTabs.find((t) => t.id === selectedTabId)) return
-    setSelectedTabId(flowchartTabs[0]?.id ?? '')
-  }, [flowchartTabs, selectedTabId])
+    if (tabId) return
+    if (internalTabId && flowchartTabs.find((t) => t.id === internalTabId)) return
+    setInternalTabId(flowchartTabs[0]?.id ?? '')
+  }, [flowchartTabs, internalTabId, tabId])
 
   const hiddenInstanceIds = useMemo(
     () => new Set(hiddenByTab[selectedTabId] ?? []),
@@ -670,28 +680,30 @@ export function MatrixView() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
 
-      {/* ── Flowchart tab selector bar ─────────────────────────────────────── */}
-      <div className="flex items-center gap-1 px-3 py-2 bg-white border-b border-gray-200 flex-shrink-0 overflow-x-auto">
-        <Network size={12} className="text-gray-400 flex-shrink-0 mr-1" />
-        {flowchartTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setSelectedTabId(tab.id)}
-            className={`flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-              tab.id === selectedTabId
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-indigo-600'
-            }`}
-          >
-            {tab.name}
-          </button>
-        ))}
-        {hiddenCount > 0 && (
-          <span className="ml-2 text-[10px] text-gray-400 flex-shrink-0">
-            {hiddenCount} instance{hiddenCount !== 1 ? 's' : ''} hidden
-          </span>
-        )}
-      </div>
+      {/* ── Flowchart tab selector bar (hidden when locked to a specific tab) */}
+      {!tabId && (
+        <div className="flex items-center gap-1 px-3 py-2 bg-white border-b border-gray-200 flex-shrink-0 overflow-x-auto">
+          <Network size={12} className="text-gray-400 flex-shrink-0 mr-1" />
+          {flowchartTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setSelectedTabId(tab.id)}
+              className={`flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                tab.id === selectedTabId
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-indigo-600'
+              }`}
+            >
+              {tab.name}
+            </button>
+          ))}
+          {hiddenCount > 0 && (
+            <span className="ml-2 text-[10px] text-gray-400 flex-shrink-0">
+              {hiddenCount} instance{hiddenCount !== 1 ? 's' : ''} hidden
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Main area: table + sidebar ─────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">

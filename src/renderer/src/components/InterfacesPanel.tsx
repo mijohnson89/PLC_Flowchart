@@ -12,7 +12,7 @@ import type {
 } from '../types'
 import { MatrixView } from './MatrixView'
 import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
-import { parseL5KInterfaces } from '../utils/l5kImport'
+import { parseL5KInterfaces, parseL5KSequences, l5kSequenceToFlowchart } from '../utils/l5kImport'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -736,7 +736,7 @@ function GlobalLibraryDrawer({ onClose }: { onClose: () => void }) {
 // ── Library sub-panel ─────────────────────────────────────────────────────────
 
 function LibraryPanel() {
-  const { userInterfaces, interfaceInstances, addUserInterface, addUserInterfacesBulk, addInterfaceInstance } = useDiagramStore()
+  const { userInterfaces, interfaceInstances, addUserInterface, addUserInterfacesBulk, addInterfaceInstance, addTabWithFlowchart, setActiveTab } = useDiagramStore()
 
   const [showNewIface, setShowNewIface] = useState(false)
   const [showNewInstance, setShowNewInstance] = useState(false)
@@ -802,35 +802,8 @@ function LibraryPanel() {
     await window.api.exportInterfaces(userInterfaces, 'interfaces.plci')
   }
 
-  async function handleImport() {
-    try {
-      const imported = await window.api.importInterfaces()
-      if (!imported || !Array.isArray(imported)) return
-      const existingNames = new Set(userInterfaces.map((u) => u.name))
-      const toAdd: UserInterface[] = []
-      for (const raw of imported) {
-        const iface = sanitizeInterface(raw)
-        if (!iface) continue
-        if (existingNames.has(iface.name)) continue
-        toAdd.push(iface)
-        existingNames.add(iface.name)
-      }
-      if (toAdd.length > 0) addUserInterfacesBulk(toAdd)
-      const added = toAdd.length
-      const skipped = imported.length - added
-      showToast(skipped > 0
-        ? `Imported ${added} interface${added !== 1 ? 's' : ''} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
-        : `Imported ${added} interface${added !== 1 ? 's' : ''}`)
-    } catch {
-      showToast('Import failed — check the file format')
-    }
-  }
-
-  function importParsedInterfaces(imported: UserInterface[], sourceLabel: string) {
-    if (!Array.isArray(imported) || imported.length === 0) {
-      showToast(`${sourceLabel}: no AOI/UDT definitions found`)
-      return
-    }
+  function importParsedInterfaces(imported: UserInterface[]): string | null {
+    if (!Array.isArray(imported) || imported.length === 0) return null
 
     const existingNames = new Set(userInterfaces.map((u) => u.name))
     const toAdd: UserInterface[] = []
@@ -845,9 +818,21 @@ function LibraryPanel() {
     if (toAdd.length > 0) addUserInterfacesBulk(toAdd)
     const added = toAdd.length
     const skipped = imported.length - added
-    showToast(skipped > 0
-      ? `${sourceLabel}: imported ${added} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
-      : `${sourceLabel}: imported ${added} interface${added !== 1 ? 's' : ''}`)
+    return skipped > 0
+      ? `imported ${added} interface${added !== 1 ? 's' : ''} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
+      : `imported ${added} interface${added !== 1 ? 's' : ''}`
+  }
+
+  async function handleImport() {
+    try {
+      const imported = await window.api.importInterfaces()
+      if (!imported || !Array.isArray(imported)) return
+      const msg = importParsedInterfaces(imported)
+      if (msg) showToast(msg)
+      else showToast('No valid interfaces found')
+    } catch {
+      showToast('Import failed — check the file format')
+    }
   }
 
   async function handleL5KFile(file: File) {
@@ -858,8 +843,25 @@ function LibraryPanel() {
     }
     try {
       const text = await file.text()
-      const parsed = parseL5KInterfaces(text)
-      importParsedInterfaces(parsed, 'L5K import')
+      const ifaces = parseL5KInterfaces(text)
+      const sequences = parseL5KSequences(text)
+
+      const ifaceMsg = importParsedInterfaces(ifaces)
+      let seqCount = 0
+      let firstSeqTabId: string | null = null
+      for (const seq of sequences) {
+        const { nodes, edges } = l5kSequenceToFlowchart(seq)
+        const tabId = addTabWithFlowchart(seq.programName, nodes, edges)
+        if (!firstSeqTabId) firstSeqTabId = tabId
+        seqCount++
+      }
+      if (firstSeqTabId) setActiveTab(firstSeqTabId)
+
+      const parts: string[] = []
+      if (ifaceMsg) parts.push(ifaceMsg)
+      if (seqCount > 0) parts.push(`${seqCount} sequence${seqCount !== 1 ? 's' : ''} as flowchart${seqCount !== 1 ? 's' : ''}`)
+      if (parts.length > 0) showToast(`L5K: ${parts.join(' · ')}`)
+      else if (ifaces.length === 0 && sequences.length === 0) showToast('L5K: no AOI/UDT or sequence definitions found')
     } catch {
       showToast('L5K import failed — could not parse file')
     }

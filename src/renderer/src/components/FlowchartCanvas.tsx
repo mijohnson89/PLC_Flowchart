@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ReactFlow, Background, Controls, MiniMap,
   BackgroundVariant, SelectionMode, Panel,
+  MarkerType,
   useReactFlow
 } from '@xyflow/react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
 import { toPng, toSvg } from 'html-to-image'
-import { Link2, Link2Off, Lock, LayoutList } from 'lucide-react'
+import { Link2, Link2Off, Lock, LayoutList, Sparkles } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
@@ -309,6 +310,222 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     pushHistory()
   }, [setFlowNodes, pushHistory])
 
+  // ── Optimise layout (force-directed with fixed layers) ────────────────────
+  // Layer assignment fixes Y positions (preserving top-to-bottom flow).
+  // A force simulation then adjusts X positions so that:
+  //   • same-layer nodes repel (no overlap)
+  //   • connected nodes attract (short edges)
+  //   • long edges push intermediate nodes aside (unique corridors)
+  const handleOptimizeLayout = useCallback(() => {
+    if (!rfRef.current) return
+    const all = rfRef.current.getNodes() as PLCNode[]
+    if (all.length === 0) return
+
+    const nodeMap = new Map(all.map((n) => [n.id, n]))
+    const allIds = new Set(all.map((n) => n.id))
+    const idList = [...allIds]
+
+    // ── 1. Build adjacency & detect back-edges via DFS ──────────────────
+    const tmpAdj = new Map<string, { target: string; edgeId: string }[]>()
+    for (const id of allIds) tmpAdj.set(id, [])
+    for (const e of flowEdges) {
+      if (allIds.has(e.source) && allIds.has(e.target))
+        tmpAdj.get(e.source)!.push({ target: e.target, edgeId: e.id })
+    }
+
+    const dfsVisited = new Set<string>()
+    const inStack = new Set<string>()
+    const backEdges = new Set<string>()
+    function dfs(u: string) {
+      dfsVisited.add(u); inStack.add(u)
+      for (const { target, edgeId } of tmpAdj.get(u) ?? []) {
+        if (inStack.has(target)) { backEdges.add(edgeId); continue }
+        if (!dfsVisited.has(target)) dfs(target)
+      }
+      inStack.delete(u)
+    }
+    const startNode = all.find((n) => n.type === 'start')
+    if (startNode) dfs(startNode.id)
+    for (const id of allIds) { if (!dfsVisited.has(id)) dfs(id) }
+
+    const fwdParents = new Map<string, string[]>()
+    for (const id of allIds) fwdParents.set(id, [])
+    const fwdEdgeList: { source: string; target: string }[] = []
+    for (const e of flowEdges) {
+      if (backEdges.has(e.id)) continue
+      if (!allIds.has(e.source) || !allIds.has(e.target)) continue
+      fwdEdgeList.push({ source: e.source, target: e.target })
+      fwdParents.get(e.target)!.push(e.source)
+    }
+
+    // ── 2. Layer assignment (longest-path from roots) ────────────────────
+    const layer = new Map<string, number>()
+    const roots = idList.filter((id) => fwdParents.get(id)!.length === 0)
+    if (roots.length === 0) roots.push(all[0].id)
+    if (startNode && !roots.includes(startNode.id)) roots.unshift(startNode.id)
+
+    function assignLayer(id: string): number {
+      if (layer.has(id)) return layer.get(id)!
+      const pLayers = fwdParents.get(id)!.map((p) => assignLayer(p))
+      const l = pLayers.length > 0 ? Math.max(...pLayers) + 1 : 0
+      layer.set(id, l)
+      return l
+    }
+    for (const r of roots) layer.set(r, 0)
+    const topoQ = [...roots]; const topoSeen = new Set(roots)
+    while (topoQ.length > 0) {
+      const u = topoQ.shift()!; assignLayer(u)
+      for (const { target } of tmpAdj.get(u) ?? []) {
+        if (!backEdges.has('') && !topoSeen.has(target) && allIds.has(target)) {
+          topoSeen.add(target); topoQ.push(target)
+        }
+      }
+    }
+    for (const id of allIds) { if (!layer.has(id)) assignLayer(id) }
+
+    const endNode = all.find((n) => n.type === 'end')
+    if (endNode) {
+      let deepest = 0
+      for (const [id, l] of layer) { if (id !== endNode.id && l > deepest) deepest = l }
+      layer.set(endNode.id, deepest + 1)
+    }
+
+    const maxLayer = Math.max(...[...layer.values()])
+
+    // Group nodes by layer
+    const layerNodes = new Map<number, string[]>()
+    for (let l = 0; l <= maxLayer; l++) layerNodes.set(l, [])
+    for (const [id, l] of layer) layerNodes.get(l)!.push(id)
+
+    // ── 3. Initial X placement — spread same-layer nodes ─────────────────
+    const NODE_W = 180
+    const MIN_SEP = NODE_W + 60
+    const x = new Map<string, number>()
+    for (const [, nodes] of layerNodes) {
+      nodes.forEach((id, i) => {
+        x.set(id, (i - (nodes.length - 1) / 2) * MIN_SEP)
+      })
+    }
+
+    // Collect forward edges annotated with layer span
+    const longEdges = fwdEdgeList
+      .map((e) => ({ ...e, srcL: layer.get(e.source)!, tgtL: layer.get(e.target)! }))
+      .filter((e) => e.tgtL - e.srcL > 1)
+
+    // ── 4. Force-directed simulation (X only, Y fixed by layers) ─────────
+    const ITERS = 200
+    const vx = new Map<string, number>()
+    for (const id of allIds) vx.set(id, 0)
+
+    for (let iter = 0; iter < ITERS; iter++) {
+      const temp = 1 - iter / ITERS // annealing: cools from 1 → 0
+      const fx = new Map<string, number>()
+      for (const id of allIds) fx.set(id, 0)
+
+      // Force A: same-layer repulsion — nodes push apart
+      for (const [, nodes] of layerNodes) {
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i], b = nodes[j]
+            let dx = x.get(b)! - x.get(a)!
+            if (dx === 0) dx = 0.1
+            const absDx = Math.abs(dx)
+            if (absDx < MIN_SEP * 4) {
+              const f = (MIN_SEP * MIN_SEP) / (dx + Math.sign(dx) * 0.01)
+              fx.set(a, fx.get(a)! - f)
+              fx.set(b, fx.get(b)! + f)
+            }
+          }
+        }
+      }
+
+      // Force B: edge attraction — connected nodes pull toward each other
+      for (const e of fwdEdgeList) {
+        const dx = x.get(e.target)! - x.get(e.source)!
+        const layerSpan = Math.abs((layer.get(e.target) ?? 0) - (layer.get(e.source) ?? 0))
+        const strength = 0.15 / Math.max(layerSpan, 1)
+        fx.set(e.source, fx.get(e.source)! + dx * strength)
+        fx.set(e.target, fx.get(e.target)! - dx * strength)
+      }
+
+      // Force C: long-edge corridor — push intermediate-layer nodes away
+      // from the interpolated path of edges that span multiple layers.
+      for (const e of longEdges) {
+        const xs = x.get(e.source)!, xt = x.get(e.target)!
+        for (let l = e.srcL + 1; l < e.tgtL; l++) {
+          const t = (l - e.srcL) / (e.tgtL - e.srcL)
+          const edgeXAt = xs + t * (xt - xs)
+          for (const nid of layerNodes.get(l)!) {
+            if (nid === e.source || nid === e.target) continue
+            const nx = x.get(nid)!
+            const dist = nx - edgeXAt
+            const absDist = Math.abs(dist)
+            if (absDist < MIN_SEP * 1.5) {
+              const sign = dist >= 0 ? 1 : -1
+              const push = sign * MIN_SEP * 3 / (absDist + 10)
+              fx.set(nid, fx.get(nid)! + push)
+            }
+          }
+        }
+      }
+
+      // Force D: centering gravity (very weak — keeps layout compact)
+      const avgX = idList.reduce((s, id) => s + x.get(id)!, 0) / idList.length
+      for (const id of allIds) {
+        fx.set(id, fx.get(id)! - (x.get(id)! - avgX) * 0.005)
+      }
+
+      // Integrate with velocity damping and simulated annealing
+      const damping = 0.7
+      const maxStep = MIN_SEP * 0.4 * temp + 2
+      for (const id of allIds) {
+        let v = vx.get(id)! * damping + fx.get(id)! * 0.05
+        v = Math.max(-maxStep, Math.min(maxStep, v))
+        vx.set(id, v)
+        x.set(id, x.get(id)! + v)
+      }
+    }
+
+    // ── 5. Enforce minimum separation within each layer ──────────────────
+    for (const [, nodes] of layerNodes) {
+      const sorted = [...nodes].sort((a, b) => x.get(a)! - x.get(b)!)
+      for (let i = 1; i < sorted.length; i++) {
+        const gap = x.get(sorted[i])! - x.get(sorted[i - 1])!
+        if (gap < MIN_SEP) {
+          x.set(sorted[i], x.get(sorted[i - 1])! + MIN_SEP)
+        }
+      }
+    }
+
+    // ── 6. Assign Y positions per layer ──────────────────────────────────
+    const V_GAP = 120
+    const START_Y = 40
+    const layerY = new Map<number, number>()
+    let cy = START_Y
+    for (let l = 0; l <= maxLayer; l++) {
+      layerY.set(l, cy)
+      const nodes = layerNodes.get(l)!
+      const maxH = nodes.length > 0
+        ? Math.max(...nodes.map((id) => nodeMap.get(id)?.measured?.height ?? 60))
+        : 60
+      cy += maxH + V_GAP
+    }
+
+    // ── 7. Apply positions ───────────────────────────────────────────────
+    const updated = all.map((n) => ({
+      ...n,
+      position: {
+        x: x.get(n.id) ?? n.position.x,
+        y: layerY.get(layer.get(n.id) ?? 0) ?? n.position.y
+      }
+    })) as PLCNode[]
+
+    rfRef.current.setNodes(updated)
+    setFlowNodes(updated)
+    pushHistory()
+    setTimeout(() => rfRef.current?.fitView({ padding: 0.12, duration: 300 }), 50)
+  }, [flowEdges, setFlowNodes, pushHistory])
+
   // ── Drag-and-drop from palette ────────────────────────────────────────────
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault()
@@ -456,8 +673,47 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
 
   if (exportRef) exportRef.current = { exportPng, exportSvg, exportPdf }
 
-  // Ensure all edges use the editable type (handles any edges loaded from older saves)
-  const styledEdges = flowEdges.map((e) => ({ ...e, type: 'editable' }))
+  // Reactively style edges: backward-flow edges get routed to the right side,
+  // dashed animation, and smoothstep routing. All edges get arrow markers.
+  const arrow = { type: MarkerType.ArrowClosed, width: 16, height: 16 }
+  const styledEdges = flowEdges.map((e) => {
+    const srcNode = flowNodes.find((n) => n.id === e.source)
+    const tgtNode = flowNodes.find((n) => n.id === e.target)
+
+    // Preserve edges with explicit custom handles (e.g., decision "yes"/"no")
+    const hasCustomHandles =
+      (e.sourceHandle && e.sourceHandle !== 'right-source') ||
+      (e.targetHandle && e.targetHandle !== 'right-target')
+
+    if (!srcNode || !tgtNode || hasCustomHandles) {
+      return { ...e, type: e.type || 'editable', markerEnd: arrow }
+    }
+
+    const isBackward = srcNode.position.y > tgtNode.position.y + 10
+    const hasSideHandles = srcNode.type !== 'decision' && tgtNode.type !== 'decision'
+
+    if (isBackward && hasSideHandles) {
+      return {
+        ...e,
+        type: 'smoothstep' as const,
+        sourceHandle: 'right-source',
+        targetHandle: 'right-target',
+        animated: true,
+        style: { strokeDasharray: '6 3' },
+        markerEnd: arrow
+      }
+    }
+
+    return {
+      ...e,
+      type: 'editable' as const,
+      sourceHandle: undefined,
+      targetHandle: undefined,
+      animated: false,
+      style: undefined,
+      markerEnd: arrow
+    }
+  })
 
   const toggleConnectMode = useCallback(() => {
     setConnectMode((prev) => {
@@ -559,6 +815,15 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
               >
                 <LayoutList size={13} />
                 Tidy
+              </button>
+
+              <button
+                onClick={handleOptimizeLayout}
+                title="Optimise Layout — spread nodes across layers to minimise line crossings"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg shadow text-xs font-medium transition-all border bg-white text-gray-600 border-gray-200 hover:border-emerald-400 hover:text-emerald-600"
+              >
+                <Sparkles size={13} />
+                Optimise
               </button>
             </div>
           </Panel>

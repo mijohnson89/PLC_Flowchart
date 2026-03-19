@@ -75,6 +75,7 @@ interface DiagramStore {
   activeTabId: string
   activeTab: () => DiagramTab | undefined
   addTab: (name: string, type: DiagramMode) => void
+  addTabWithFlowchart: (name: string, nodes: PLCNode[], edges: PLCEdge[]) => string
   removeTab: (id: string) => void
   renameTab: (id: string, name: string) => void
   setActiveTab: (id: string) => void
@@ -191,6 +192,23 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       selectedEdgeId: null
     }))
     get().pushHistory()
+  },
+
+  addTabWithFlowchart: (name, nodes, edges) => {
+    const tab: DiagramTab = {
+      ...emptyTab(name, 'flowchart'),
+      flowNodes: nodes,
+      flowEdges: edges
+    }
+    set((s) => ({
+      tabs: [...s.tabs, tab],
+      activeTabId: tab.id,
+      isDirty: true,
+      selectedNodeId: null,
+      selectedEdgeId: null
+    }))
+    get().pushHistory()
+    return tab.id
   },
 
   removeTab: (id) => {
