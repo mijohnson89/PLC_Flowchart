@@ -5,9 +5,9 @@ import {
   useReactFlow
 } from '@xyflow/react'
 import type { ReactFlowInstance } from '@xyflow/react'
-import type { DragEvent, KeyboardEvent } from 'react'
+import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
 import { toPng, toSvg } from 'html-to-image'
-import { Link2, Link2Off, Lock } from 'lucide-react'
+import { Link2, Link2Off, Lock, LayoutList } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
@@ -221,6 +221,78 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
   const onNodesDelete = useCallback(() => pushHistory(), [pushHistory])
   const onEdgesDelete = useCallback(() => pushHistory(), [pushHistory])
 
+  // ── Magnetic centre-snap during drag ──────────────────────────────────────
+  // Snap threshold in canvas units. The visual guide lines (GuideLinesOverlay)
+  // already show at 8px; we snap a little later so the guide appears first.
+  const SNAP_THRESHOLD = 12
+
+  const onNodeDrag = useCallback((_e: MouseEvent, node: PLCNode) => {
+    if (!rfRef.current) return
+    const all = rfRef.current.getNodes()
+    const others = all.filter((n) => !n.dragging)
+    const nw = node.measured?.width ?? 120
+    const nCX = node.position.x + nw / 2
+
+    let snapX: number | null = null
+    for (const other of others) {
+      const ow = other.measured?.width ?? 120
+      const oCX = other.position.x + ow / 2
+      if (Math.abs(nCX - oCX) < SNAP_THRESHOLD) {
+        snapX = oCX - nw / 2
+        break
+      }
+    }
+
+    if (snapX !== null && Math.abs(snapX - node.position.x) > 0.5) {
+      rfRef.current.setNodes(
+        all.map((n) =>
+          n.id === node.id ? { ...n, position: { x: snapX!, y: node.position.y } } : n
+        )
+      )
+    }
+  }, [])
+
+  const onNodeDragStop = useCallback((_e: MouseEvent, _node: PLCNode) => {
+    if (!rfRef.current) return
+    // Sync snapped positions back to the store and record undo point
+    setFlowNodes(rfRef.current.getNodes() as PLCNode[])
+    pushHistory()
+  }, [setFlowNodes, pushHistory])
+
+  // ── One-click tidy layout ─────────────────────────────────────────────────
+  // Aligns every node's centre-X to the Start node's centre-X and evenly
+  // redistributes vertical spacing, preserving existing top-to-bottom order.
+  const handleTidyLayout = useCallback(() => {
+    if (!rfRef.current) return
+    const all = rfRef.current.getNodes() as PLCNode[]
+    if (all.length === 0) return
+
+    // Reference centre-X: use Start node, falling back to leftmost node
+    const startNode = all.find((n) => n.type === 'start') ?? all[0]
+    const refW = startNode.measured?.width ?? 120
+    const refCX = startNode.position.x + refW / 2
+
+    // Sort by current Y to preserve reading order, then redistribute spacing
+    const sorted = [...all].sort((a, b) => a.position.y - b.position.y)
+    const V_GAP = 80
+    let curY = sorted[0].position.y
+
+    const yMap = new Map<string, number>()
+    for (const n of sorted) {
+      yMap.set(n.id, curY)
+      curY += (n.measured?.height ?? 60) + V_GAP
+    }
+
+    const updated = all.map((n) => {
+      const nw = n.measured?.width ?? 120
+      return { ...n, position: { x: refCX - nw / 2, y: yMap.get(n.id) ?? n.position.y } }
+    }) as PLCNode[]
+
+    rfRef.current.setNodes(updated)
+    setFlowNodes(updated)
+    pushHistory()
+  }, [setFlowNodes, pushHistory])
+
   // ── Drag-and-drop from palette ────────────────────────────────────────────
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault()
@@ -408,6 +480,8 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
         onPaneClick={readOnly ? undefined : onPaneClick}
         onNodesDelete={readOnly ? undefined : onNodesDelete}
         onEdgesDelete={readOnly ? undefined : onEdgesDelete}
+        onNodeDrag={readOnly ? undefined : onNodeDrag}
+        onNodeDragStop={readOnly ? undefined : onNodeDragStop}
         // ── Interaction model ─────────────────────────────────────────────
         // Left-drag on empty canvas  → rubber-band multi-select
         // Right-drag / right-hold    → pan
@@ -445,21 +519,32 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
           style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}
         />
 
-        {/* Connect tool toggle button (inside canvas, bottom-left) */}
+        {/* Bottom-left tools: Connect + Tidy Layout */}
         {!readOnly && (
           <Panel position="bottom-left">
-            <button
-              onClick={toggleConnectMode}
-              title={connectMode ? 'Exit Connect Mode (ESC)' : 'Connect Tool — click two nodes to draw an edge'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg shadow text-xs font-medium transition-all border ${
-                connectMode
-                  ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400 hover:text-amber-600'
-              }`}
-            >
-              {connectMode ? <Link2Off size={13} /> : <Link2 size={13} />}
-              {connectMode ? 'Exit Connect' : 'Connect'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleConnectMode}
+                title={connectMode ? 'Exit Connect Mode (ESC)' : 'Connect Tool — click two nodes to draw an edge'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg shadow text-xs font-medium transition-all border ${
+                  connectMode
+                    ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400 hover:text-amber-600'
+                }`}
+              >
+                {connectMode ? <Link2Off size={13} /> : <Link2 size={13} />}
+                {connectMode ? 'Exit Connect' : 'Connect'}
+              </button>
+
+              <button
+                onClick={handleTidyLayout}
+                title="Tidy Layout — centre all nodes and even out vertical spacing"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg shadow text-xs font-medium transition-all border bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600"
+              >
+                <LayoutList size={13} />
+                Tidy
+              </button>
+            </div>
           </Panel>
         )}
 
