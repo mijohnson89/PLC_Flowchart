@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
 function createWindow(): BrowserWindow {
@@ -127,6 +127,44 @@ ipcMain.handle('dialog:export-image', async (_, { ext }) => {
   })
   return filePath ?? null
 })
+
+// ── Global Interface Library ─────────────────────────────────────────────────
+
+const LIBRARY_FILE = join(app.getPath('userData'), 'interface-library.json')
+
+ipcMain.handle('library:load', () => {
+  try {
+    if (!existsSync(LIBRARY_FILE)) return []
+    return JSON.parse(readFileSync(LIBRARY_FILE, 'utf-8'))
+  } catch { return [] }
+})
+
+ipcMain.handle('library:save', (_, items) => {
+  writeFileSync(LIBRARY_FILE, JSON.stringify(items, null, 2), 'utf-8')
+  return true
+})
+
+ipcMain.handle('dialog:import-interfaces', async () => {
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    filters: [{ name: 'PLC Interface File', extensions: ['plci'] }],
+    properties: ['openFile']
+  })
+  if (canceled || !filePaths[0]) return null
+  const raw = readFileSync(filePaths[0], 'utf-8')
+  return JSON.parse(raw)
+})
+
+ipcMain.handle('dialog:export-interfaces', async (_, { items, defaultName }) => {
+  const { filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName ?? 'interfaces.plci',
+    filters: [{ name: 'PLC Interface File', extensions: ['plci'] }]
+  })
+  if (!filePath) return false
+  writeFileSync(filePath, JSON.stringify(items, null, 2), 'utf-8')
+  return true
+})
+
+// ── File write ───────────────────────────────────────────────────────────────
 
 ipcMain.handle('fs:write', async (_, { filePath, data, encoding }) => {
   if (encoding === 'base64') {

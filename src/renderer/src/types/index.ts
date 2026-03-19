@@ -259,6 +259,10 @@ export interface ElectronAPI {
   exportImage: (ext: string) => Promise<string | null>
   writeFile: (filePath: string, data: string, encoding?: string) => Promise<boolean>
   onMenu: (channel: string, cb: () => void) => () => void
+  loadLibrary: () => Promise<UserInterface[]>
+  saveLibrary: (items: UserInterface[]) => Promise<boolean>
+  importInterfaces: () => Promise<UserInterface[] | null>
+  exportInterfaces: (items: UserInterface[], defaultName?: string) => Promise<boolean>
 }
 
 declare global {

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Cpu, Database,
-  Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2
+  Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2,
+  BookMarked, Upload, Download, CheckCircle2
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type {
@@ -229,13 +230,20 @@ function AddFieldRow({ isAOI, onAdd }: { isAOI: boolean; onAdd: (f: InterfaceFie
 
 // ── Interface card ────────────────────────────────────────────────────────────
 
-function InterfaceCard({ iface }: { iface: UserInterface }) {
+function InterfaceCard({ iface, onSaveToLibrary }: { iface: UserInterface; onSaveToLibrary: (iface: UserInterface) => void }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(iface.name)
   const [draftDesc, setDraftDesc] = useState(iface.description ?? '')
+  const [savedFlash, setSavedFlash] = useState(false)
 
   const { updateUserInterface, removeUserInterface, addFieldToInterface, updateFieldInInterface, removeFieldFromInterface } = useDiagramStore()
+
+  function handleSaveToLib() {
+    onSaveToLibrary(iface)
+    setSavedFlash(true)
+    setTimeout(() => setSavedFlash(false), 2000)
+  }
 
   function saveHeader() {
     updateUserInterface(iface.id, { name: draftName.trim() || iface.name, description: draftDesc.trim() || undefined })
@@ -297,6 +305,13 @@ function InterfaceCard({ iface }: { iface: UserInterface }) {
 
         {!editing && (
           <div className="flex gap-1 flex-shrink-0">
+            <button
+              onClick={handleSaveToLib}
+              className={`p-1 rounded transition-colors ${savedFlash ? 'text-amber-500' : 'text-gray-300 hover:text-amber-500'}`}
+              title="Save to Global Library"
+            >
+              <BookMarked size={12} />
+            </button>
             <button
               onClick={() => { setDraftName(iface.name); setDraftDesc(iface.description ?? ''); setEditing(true) }}
               className="p-1 text-gray-400 hover:text-indigo-600 rounded"
@@ -600,6 +615,99 @@ function NewInstanceDialog({ ifaces, onConfirm, onCancel }: {
   )
 }
 
+// ── Global Library Drawer ─────────────────────────────────────────────────────
+
+function GlobalLibraryDrawer({ onClose }: { onClose: () => void }) {
+  const [items, setItems] = useState<UserInterface[]>([])
+  const [loading, setLoading] = useState(true)
+  const { userInterfaces, addUserInterface } = useDiagramStore()
+
+  useEffect(() => {
+    window.api.loadLibrary().then((loaded) => { setItems(loaded); setLoading(false) })
+  }, [])
+
+  function persist(updated: UserInterface[]) {
+    setItems(updated)
+    window.api.saveLibrary(updated)
+  }
+
+  function addToProject(item: UserInterface) {
+    if (userInterfaces.some((u) => u.name === item.name)) return
+    addUserInterface({ ...item, id: uid('iface'), createdAt: new Date().toISOString() })
+  }
+
+  return (
+    <div className="absolute inset-y-0 right-0 w-72 bg-white border-l border-gray-200 shadow-2xl z-20 flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <BookMarked size={15} className="text-indigo-600" />
+          <span className="text-sm font-bold text-gray-800">Global Library</span>
+          <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold">{items.length}</span>
+        </div>
+        <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors">
+          <X size={16} />
+        </button>
+      </div>
+      <p className="text-[10px] text-gray-400 px-4 py-2 bg-indigo-50/40 border-b border-gray-100 flex-shrink-0">
+        Persisted on this machine across all projects. Click ★ on any interface to save it here.
+      </p>
+
+      {/* Items */}
+      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+        {loading ? (
+          <p className="text-xs text-gray-400 text-center py-10">Loading…</p>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center py-10 text-gray-400">
+            <BookMarked size={28} className="mb-2 opacity-25" />
+            <p className="text-xs font-medium">Library is empty</p>
+            <p className="text-[10px] mt-1">Click ★ on an interface to save it here.</p>
+          </div>
+        ) : (
+          items.map((item) => {
+            const inProject = userInterfaces.some((u) => u.name === item.name)
+            return (
+              <div key={item.id} className="bg-gray-50 rounded-lg border border-gray-200 px-3 py-2.5">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${
+                    item.type === 'AOI' ? 'bg-orange-100 text-orange-700' : 'bg-cyan-100 text-cyan-700'
+                  }`}>{item.type}</span>
+                  <span className="text-sm font-semibold text-gray-800 truncate flex-1">{item.name}</span>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">{item.fields.length}f</span>
+                </div>
+                {item.description && (
+                  <p className="text-[10px] text-gray-400 mb-2 truncate">{item.description}</p>
+                )}
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => addToProject(item)}
+                    disabled={inProject}
+                    className={`flex-1 text-[10px] py-1 rounded border font-medium transition-all ${
+                      inProject
+                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                        : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                    }`}
+                    title={inProject ? 'Already in this project' : 'Add to current project'}
+                  >
+                    {inProject ? '✓ In Project' : '+ Add to Project'}
+                  </button>
+                  <button
+                    onClick={() => persist(items.filter((i) => i.id !== item.id))}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded border border-gray-200 transition-colors"
+                    title="Remove from global library"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Library sub-panel ─────────────────────────────────────────────────────────
 
 function LibraryPanel() {
@@ -609,6 +717,49 @@ function LibraryPanel() {
   const [showNewInstance, setShowNewInstance] = useState(false)
   const [ifaceSearch, setIfaceSearch] = useState('')
   const [instanceSearch, setInstanceSearch] = useState('')
+  const [showGlobalLib, setShowGlobalLib] = useState(false)
+  const [importToast, setImportToast] = useState<string | null>(null)
+
+  function showToast(msg: string) {
+    setImportToast(msg)
+    setTimeout(() => setImportToast(null), 3500)
+  }
+
+  async function handleExport() {
+    if (userInterfaces.length === 0) return
+    await window.api.exportInterfaces(userInterfaces, 'interfaces.plci')
+  }
+
+  async function handleImport() {
+    try {
+      const imported = await window.api.importInterfaces()
+      if (!imported || !Array.isArray(imported)) return
+      const existingNames = new Set(userInterfaces.map((u) => u.name))
+      let added = 0
+      for (const iface of imported) {
+        if (!iface.name || !iface.type || !Array.isArray(iface.fields)) continue
+        if (existingNames.has(iface.name)) continue
+        addUserInterface({ ...iface, id: uid('iface'), createdAt: new Date().toISOString() })
+        existingNames.add(iface.name)
+        added++
+      }
+      const skipped = imported.length - added
+      showToast(skipped > 0
+        ? `Imported ${added} interface${added !== 1 ? 's' : ''} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
+        : `Imported ${added} interface${added !== 1 ? 's' : ''}`)
+    } catch {
+      showToast('Import failed — check the file format')
+    }
+  }
+
+  async function handleSaveToLibrary(iface: UserInterface) {
+    const existing = await window.api.loadLibrary()
+    const updated = existing.some((e) => e.name === iface.name)
+      ? existing.map((e) => e.name === iface.name ? { ...iface } : e)
+      : [...existing, { ...iface }]
+    await window.api.saveLibrary(updated)
+    showToast(`"${iface.name}" saved to global library`)
+  }
 
   const filteredIfaces = userInterfaces.filter((i) =>
     i.name.toLowerCase().includes(ifaceSearch.toLowerCase()) ||
@@ -625,24 +776,59 @@ function LibraryPanel() {
   })
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-gray-50">
+    <div className="flex flex-1 overflow-hidden bg-gray-50 relative">
+
+      {/* ── Toast ────────────────────────────────────────────────────────── */}
+      {importToast && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-gray-900 text-white text-xs px-4 py-2 rounded-full shadow-lg pointer-events-none">
+          <CheckCircle2 size={13} className="text-emerald-400" />
+          {importToast}
+        </div>
+      )}
 
       {/* ── User Interfaces ───────────────────────────────────────────────── */}
       <div className="flex flex-col w-1/2 border-r border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Settings2 size={15} className="text-indigo-500" />
-            <h2 className="text-sm font-bold text-gray-800">User Interfaces</h2>
-            <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">
-              {userInterfaces.length}
-            </span>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+          <Settings2 size={15} className="text-indigo-500 flex-shrink-0" />
+          <h2 className="text-sm font-bold text-gray-800">User Interfaces</h2>
+          <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">
+            {userInterfaces.length}
+          </span>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={handleImport}
+              title="Import interfaces from a .plci file"
+              className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors bg-white"
+            >
+              <Upload size={11} /> Import
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={userInterfaces.length === 0}
+              title="Export all interfaces to a .plci file"
+              className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download size={11} /> Export
+            </button>
+            <button
+              onClick={() => setShowGlobalLib((v) => !v)}
+              title="Browse Global Library"
+              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded border transition-colors ${
+                showGlobalLib
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 bg-white'
+              }`}
+            >
+              <BookMarked size={11} /> Library
+            </button>
+            <div className="w-px h-4 bg-gray-200 mx-0.5" />
+            <button
+              onClick={() => setShowNewIface(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              <Plus size={13} /> New
+            </button>
           </div>
-          <button
-            onClick={() => setShowNewIface(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
-          >
-            <Plus size={13} /> New
-          </button>
         </div>
         <div className="px-4 py-2 border-b border-gray-100 bg-white flex-shrink-0">
           <input
@@ -660,7 +846,9 @@ function LibraryPanel() {
               <p className="text-xs mt-1">Create an AOI or UDT to define a reusable interface structure.</p>
             </div>
           ) : (
-            filteredIfaces.map((iface) => <InterfaceCard key={iface.id} iface={iface} />)
+            filteredIfaces.map((iface) => (
+              <InterfaceCard key={iface.id} iface={iface} onSaveToLibrary={handleSaveToLibrary} />
+            ))
           )}
         </div>
       </div>
@@ -712,6 +900,9 @@ function LibraryPanel() {
           )}
         </div>
       </div>
+
+      {/* Global Library Drawer (overlays the panel) */}
+      {showGlobalLib && <GlobalLibraryDrawer onClose={() => setShowGlobalLib(false)} />}
 
       {/* Dialogs */}
       {showNewIface && (

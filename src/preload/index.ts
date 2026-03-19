@@ -9,11 +9,19 @@ contextBridge.exposeInMainWorld('api', {
   writeFile: (filePath: string, data: string, encoding?: string) =>
     ipcRenderer.invoke('fs:write', { filePath, data, encoding }),
 
+  // Global Interface Library
+  loadLibrary: () => ipcRenderer.invoke('library:load'),
+  saveLibrary: (items: unknown) => ipcRenderer.invoke('library:save', items),
+  importInterfaces: () => ipcRenderer.invoke('dialog:import-interfaces'),
+  exportInterfaces: (items: unknown, defaultName?: string) =>
+    ipcRenderer.invoke('dialog:export-interfaces', { items, defaultName }),
+
   // Menu events (main -> renderer)
   onMenu: (channel: string, cb: () => void) => {
     const validChannels = [
       'menu-new', 'menu-open', 'menu-save', 'menu-save-as',
       'menu-export-png', 'menu-export-svg', 'menu-export-pdf', 'menu-print-pdf',
+      'menu-print-report',
       'menu-undo', 'menu-redo', 'menu-delete', 'menu-fit', 'menu-select-all'
     ]
     if (validChannels.includes(channel)) {
