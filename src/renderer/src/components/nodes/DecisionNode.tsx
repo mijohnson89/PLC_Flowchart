@@ -38,6 +38,8 @@ export function DecisionNode({ id, data, selected }: NodeProps<{ data: PLCNodeDa
         sublabel={d.condition}
         noSource
         noTarget
+        linkedTabId={d.linkedTabId}
+        linkedNodeId={d.linkedNodeId}
       />
 
       {/* In handle */}

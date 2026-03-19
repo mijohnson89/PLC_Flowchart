@@ -20,6 +20,8 @@ export function StepNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
       sublabel={d.description}
       badge={d.stepNumber !== undefined ? `S${d.stepNumber}` : undefined}
       stateTag={stateTag}
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }

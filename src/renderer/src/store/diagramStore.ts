@@ -111,6 +111,10 @@ interface DiagramStore {
   setSelectedNode: (id: string | null) => void
   setSelectedEdge: (id: string | null) => void
 
+  // ── Cross-diagram Navigation ────────────────────────────────────────────────
+  pendingFocusNodeId: string | null
+  setPendingFocusNodeId: (id: string | null) => void
+
   // ── History ────────────────────────────────────────────────────────────────
   history: HistoryEntry[]
   historyIndex: number
@@ -441,6 +445,10 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   selectedEdgeId: null,
   setSelectedNode: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
   setSelectedEdge: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
+
+  // ── Cross-diagram Navigation ────────────────────────────────────────────────
+  pendingFocusNodeId: null,
+  setPendingFocusNodeId: (id) => set({ pendingFocusNodeId: id }),
 
   // ── History ────────────────────────────────────────────────────────────────
   history: [{ tabs: initialTabs }],

@@ -1,5 +1,7 @@
 import { Handle, Position } from '@xyflow/react'
+import { Link2 } from 'lucide-react'
 import type { PackMLCategory } from '../../types'
+import { useDiagramStore } from '../../store/diagramStore'
 
 export interface StateTag {
   label: string
@@ -20,22 +22,44 @@ export interface BaseNodeConfig {
   leftHandles?: boolean  // add left + right handles (for actor)
   noTarget?: boolean     // start node has no target
   noSource?: boolean     // end node has no source
+  linkedTabId?: string   // cross-diagram anchor target tab
+  linkedNodeId?: string  // cross-diagram anchor target node (optional)
 }
 
 export function BaseNode({
   color, typeLabel, selected,
   label, sublabel, badge, stateTag,
-  leftHandles, noTarget, noSource
+  leftHandles, noTarget, noSource,
+  linkedTabId, linkedNodeId
 }: BaseNodeConfig) {
   const selectionRing = selected
     ? 'ring-2 ring-offset-1 ring-blue-400'
     : ''
+
+  function handleLinkClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!linkedTabId) return
+    const store = useDiagramStore.getState()
+    store.setActiveTab(linkedTabId)
+    if (linkedNodeId) store.setPendingFocusNodeId(linkedNodeId)
+  }
 
   return (
     <div
       className={`relative min-w-[152px] max-w-[220px] bg-white rounded-lg shadow-md overflow-hidden border border-gray-200 ${selectionRing}`}
       style={{ borderTopColor: color, borderTopWidth: 3 }}
     >
+      {/* Cross-diagram anchor badge — top-right corner */}
+      {linkedTabId && (
+        <button
+          className="absolute top-1 right-1 z-10 flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors leading-none nodrag nopan"
+          onClick={handleLinkClick}
+          title="Navigate to linked diagram"
+        >
+          <Link2 size={8} />
+        </button>
+      )}
+
       {/* Coloured type-label header strip */}
       <div
         className="flex items-center justify-between px-2.5 pt-1.5 pb-1"

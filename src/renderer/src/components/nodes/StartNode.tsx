@@ -12,6 +12,8 @@ export function StartNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) 
       label={d.label || 'Start'}
       sublabel={d.description}
       noTarget
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }

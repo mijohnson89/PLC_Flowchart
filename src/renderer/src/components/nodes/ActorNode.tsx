@@ -21,6 +21,8 @@ export function ActorNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) 
       label={d.label || 'Actor'}
       sublabel={d.description}
       leftHandles
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }

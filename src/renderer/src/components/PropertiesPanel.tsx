@@ -1,7 +1,7 @@
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
 import type { PLCNodeData, PLCNodeType, PackMLState } from '../types'
-import { PACKML_STATES, PACKML_WAIT_STATES, PACKML_ACTING_STATES } from '../types'
-import { Trash2 } from 'lucide-react'
+import { PACKML_STATES, PACKML_WAIT_STATES, PACKML_ACTING_STATES, INTERFACES_TAB_ID } from '../types'
+import { Trash2, Link2, X } from 'lucide-react'
 
 const ACTOR_TYPES = ['plc', 'hmi', 'device', 'operator', 'system'] as const
 const OUTPUT_TYPES = ['coil', 'move', 'compare', 'timer', 'counter'] as const
@@ -73,6 +73,18 @@ export function PropertiesPanel() {
   function patchEdge(patch: { label?: string }) {
     setFlowEdges(flowEdges.map((e) => e.id === selectedEdgeId ? { ...e, ...patch } : e))
   }
+
+  const allTabs = useDiagramStore((s) => s.tabs)
+  const activeTabId = useDiagramStore((s) => s.activeTabId)
+
+  // Tabs available for cross-diagram linking (exclude Interfaces tab and current tab)
+  const linkableTabs = allTabs.filter(
+    (t) => t.id !== activeTabId && t.id !== INTERFACES_TAB_ID
+  )
+
+  // Nodes available in the linked tab for node-level targeting
+  const linkedTab = allTabs.find((t) => t.id === (selectedNode?.data as PLCNodeData | undefined)?.linkedTabId)
+  const linkedTabNodes = linkedTab?.flowNodes ?? []
 
   if (!selectedNode && !selectedEdge) {
     return (
@@ -266,6 +278,62 @@ export function PropertiesPanel() {
             </button>
           </div>
         </Field>
+
+        {/* ── Cross-diagram Anchor ─────────────────────────────────────── */}
+        <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1">
+              <Link2 size={10} />
+              Diagram Link
+            </label>
+            {data.linkedTabId && (
+              <button
+                className="flex items-center gap-0.5 text-[10px] text-red-400 hover:text-red-600"
+                onClick={() => patchNode({ linkedTabId: undefined, linkedNodeId: undefined })}
+                title="Remove link"
+              >
+                <X size={10} /> Remove
+              </button>
+            )}
+          </div>
+
+          <select
+            className="w-full border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-800 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            value={data.linkedTabId ?? ''}
+            onChange={(e) => patchNode({ linkedTabId: e.target.value || undefined, linkedNodeId: undefined })}
+          >
+            <option value="">— No link —</option>
+            {linkableTabs.map((t) => (
+              <option key={t.id} value={t.id}>
+                [{t.type === 'flowchart' ? 'Flow' : 'Seq'}] {t.name}
+              </option>
+            ))}
+          </select>
+
+          {data.linkedTabId && linkedTabNodes.length > 0 && (
+            <select
+              className="w-full border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-800 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              value={data.linkedNodeId ?? ''}
+              onChange={(e) => patchNode({ linkedNodeId: e.target.value || undefined })}
+            >
+              <option value="">— Start of diagram —</option>
+              {linkedTabNodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  [{n.type}] {(n.data as PLCNodeData).label || n.id}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {data.linkedTabId && (
+            <p className="text-[10px] text-indigo-500 leading-snug">
+              Click the <span className="font-bold">⛓</span> badge on this node to jump to{' '}
+              <span className="font-semibold">{linkedTab?.name ?? '…'}</span>
+              {data.linkedNodeId ? ` › ${(linkedTabNodes.find(n => n.id === data.linkedNodeId)?.data as PLCNodeData | undefined)?.label ?? data.linkedNodeId}` : ''}
+            </p>
+          )}
+        </div>
+
       </div>
 
       {/* Node ID (debug) */}

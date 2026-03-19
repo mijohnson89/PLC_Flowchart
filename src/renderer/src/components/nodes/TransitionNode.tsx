@@ -11,6 +11,8 @@ export function TransitionNode({ data, selected }: NodeProps<{ data: PLCNodeData
       selected={selected}
       label={d.label || 'Transition'}
       sublabel={d.condition}
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }

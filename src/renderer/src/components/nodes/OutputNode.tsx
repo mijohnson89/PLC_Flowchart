@@ -21,6 +21,8 @@ export function OutputNode({ data, selected }: NodeProps<{ data: PLCNodeData }>)
       selected={selected}
       label={d.label || d.tagName || 'Output'}
       sublabel={sub || undefined}
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }

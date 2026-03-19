@@ -26,6 +26,8 @@ export interface PLCNodeData extends Record<string, unknown> {
   actorType?: 'plc' | 'hmi' | 'device' | 'operator' | 'system'
   color?: string           // custom override color
   routineName?: string     // for process nodes
+  linkedTabId?: string     // cross-diagram anchor: target tab ID
+  linkedNodeId?: string    // cross-diagram anchor: target node ID within that tab (optional)
 }
 
 export type PLCNode = Node<PLCNodeData, PLCNodeType>

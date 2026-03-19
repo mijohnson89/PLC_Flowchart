@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ReactFlow, Background, Controls, MiniMap,
   BackgroundVariant, SelectionMode, Panel,
@@ -163,6 +163,22 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const rfRef = useRef<ReactFlowInstance | null>(null)
+
+  // ── Cross-diagram navigation ──────────────────────────────────────────────
+  const pendingFocusNodeId = useDiagramStore((s) => s.pendingFocusNodeId)
+  const setPendingFocusNodeId = useDiagramStore((s) => s.setPendingFocusNodeId)
+
+  useEffect(() => {
+    if (!pendingFocusNodeId || !rfRef.current) return
+    // Delay slightly to allow React Flow to finish laying out the new tab's nodes
+    const timer = setTimeout(() => {
+      if (!rfRef.current) return
+      rfRef.current.fitView({ nodes: [{ id: pendingFocusNodeId }], padding: 0.6, duration: 500 })
+      setSelectedNode(pendingFocusNodeId)
+      setPendingFocusNodeId(null)
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [pendingFocusNodeId, setPendingFocusNodeId, setSelectedNode])
 
   // ── Connect tool state ────────────────────────────────────────────────────
   const [connectMode, setConnectMode] = useState(false)

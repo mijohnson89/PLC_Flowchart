@@ -12,6 +12,8 @@ export function EndNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
       label={d.label || 'End'}
       sublabel={d.description}
       noSource
+      linkedTabId={d.linkedTabId}
+      linkedNodeId={d.linkedNodeId}
     />
   )
 }
