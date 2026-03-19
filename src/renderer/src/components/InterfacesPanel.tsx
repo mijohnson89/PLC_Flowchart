@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, Component } from 'react'
+import type { ReactNode, ErrorInfo } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Cpu, Database,
   Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2,
@@ -11,6 +12,7 @@ import type {
 } from '../types'
 import { MatrixView } from './MatrixView'
 import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
+import { parseL5KInterfaces } from '../utils/l5kImport'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -228,6 +230,29 @@ function AddFieldRow({ isAOI, onAdd }: { isAOI: boolean; onAdd: (f: InterfaceFie
   )
 }
 
+// ── Error boundary for individual cards ───────────────────────────────────────
+
+class CardErrorBoundary extends Component<
+  { name: string; children: ReactNode },
+  { error: string | null }
+> {
+  state = { error: null as string | null }
+  static getDerivedStateFromError(err: Error) { return { error: err.message } }
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error('[InterfaceCard crash]', this.props.name, err, info)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="bg-red-50 rounded-xl border border-red-300 px-4 py-3 text-xs text-red-700">
+          <strong>{this.props.name}</strong> — render error: {this.state.error}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // ── Interface card ────────────────────────────────────────────────────────────
 
 function InterfaceCard({ iface, onSaveToLibrary }: { iface: UserInterface; onSaveToLibrary: (iface: UserInterface) => void }) {
@@ -253,9 +278,9 @@ function InterfaceCard({ iface, onSaveToLibrary }: { iface: UserInterface; onSav
   const isAOI = iface.type === 'AOI'
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
       {/* Card header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 min-h-[48px]">
         <button
           onClick={() => setExpanded((v) => !v)}
           className="text-gray-400 hover:text-gray-600 flex-shrink-0"
@@ -711,7 +736,7 @@ function GlobalLibraryDrawer({ onClose }: { onClose: () => void }) {
 // ── Library sub-panel ─────────────────────────────────────────────────────────
 
 function LibraryPanel() {
-  const { userInterfaces, interfaceInstances, addUserInterface, addInterfaceInstance } = useDiagramStore()
+  const { userInterfaces, interfaceInstances, addUserInterface, addUserInterfacesBulk, addInterfaceInstance } = useDiagramStore()
 
   const [showNewIface, setShowNewIface] = useState(false)
   const [showNewInstance, setShowNewInstance] = useState(false)
@@ -719,10 +744,57 @@ function LibraryPanel() {
   const [instanceSearch, setInstanceSearch] = useState('')
   const [showGlobalLib, setShowGlobalLib] = useState(false)
   const [importToast, setImportToast] = useState<string | null>(null)
+  const [dragOverL5k, setDragOverL5k] = useState(false)
+  const l5kInputRef = useRef<HTMLInputElement | null>(null)
 
   function showToast(msg: string) {
     setImportToast(msg)
     setTimeout(() => setImportToast(null), 3500)
+  }
+
+  function sanitizeField(raw: unknown): InterfaceField | null {
+    if (!raw || typeof raw !== 'object') return null
+    const src = raw as Partial<InterfaceField>
+    const name = String(src.name ?? '').trim()
+    const dataType = String(src.dataType ?? '').trim()
+    if (!name || !dataType) return null
+
+    const usage = src.usage
+    const safeUsage: AOIFieldUsage | undefined =
+      usage === 'Input' || usage === 'Output' || usage === 'InOut' || usage === 'Local'
+        ? usage
+        : undefined
+
+    return {
+      id: uid('field'),
+      name,
+      dataType,
+      usage: safeUsage,
+      description: src.description ? String(src.description) : undefined,
+      defaultValue: src.defaultValue !== undefined ? String(src.defaultValue) : undefined
+    }
+  }
+
+  function sanitizeInterface(raw: unknown): UserInterface | null {
+    if (!raw || typeof raw !== 'object') return null
+    const src = raw as Partial<UserInterface>
+    const name = String(src.name ?? '').trim()
+    const type = src.type === 'AOI' || src.type === 'UDT' ? src.type : null
+    if (!name || !type) return null
+
+    const rawFields = Array.isArray(src.fields) ? src.fields : []
+    const fields = rawFields
+      .map((f) => sanitizeField(f))
+      .filter((f): f is InterfaceField => f !== null)
+
+    return {
+      id: uid('iface'),
+      name,
+      type,
+      description: src.description ? String(src.description) : undefined,
+      fields,
+      createdAt: new Date().toISOString()
+    }
   }
 
   async function handleExport() {
@@ -735,20 +807,61 @@ function LibraryPanel() {
       const imported = await window.api.importInterfaces()
       if (!imported || !Array.isArray(imported)) return
       const existingNames = new Set(userInterfaces.map((u) => u.name))
-      let added = 0
-      for (const iface of imported) {
-        if (!iface.name || !iface.type || !Array.isArray(iface.fields)) continue
+      const toAdd: UserInterface[] = []
+      for (const raw of imported) {
+        const iface = sanitizeInterface(raw)
+        if (!iface) continue
         if (existingNames.has(iface.name)) continue
-        addUserInterface({ ...iface, id: uid('iface'), createdAt: new Date().toISOString() })
+        toAdd.push(iface)
         existingNames.add(iface.name)
-        added++
       }
+      if (toAdd.length > 0) addUserInterfacesBulk(toAdd)
+      const added = toAdd.length
       const skipped = imported.length - added
       showToast(skipped > 0
         ? `Imported ${added} interface${added !== 1 ? 's' : ''} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
         : `Imported ${added} interface${added !== 1 ? 's' : ''}`)
     } catch {
       showToast('Import failed — check the file format')
+    }
+  }
+
+  function importParsedInterfaces(imported: UserInterface[], sourceLabel: string) {
+    if (!Array.isArray(imported) || imported.length === 0) {
+      showToast(`${sourceLabel}: no AOI/UDT definitions found`)
+      return
+    }
+
+    const existingNames = new Set(userInterfaces.map((u) => u.name))
+    const toAdd: UserInterface[] = []
+    for (const raw of imported) {
+      const iface = sanitizeInterface(raw)
+      if (!iface) continue
+      if (existingNames.has(iface.name)) continue
+      toAdd.push(iface)
+      existingNames.add(iface.name)
+    }
+
+    if (toAdd.length > 0) addUserInterfacesBulk(toAdd)
+    const added = toAdd.length
+    const skipped = imported.length - added
+    showToast(skipped > 0
+      ? `${sourceLabel}: imported ${added} · skipped ${skipped} duplicate${skipped !== 1 ? 's' : ''}`
+      : `${sourceLabel}: imported ${added} interface${added !== 1 ? 's' : ''}`)
+  }
+
+  async function handleL5KFile(file: File) {
+    const name = file.name.toLowerCase()
+    if (!name.endsWith('.l5k')) {
+      showToast('Drop a .L5K file')
+      return
+    }
+    try {
+      const text = await file.text()
+      const parsed = parseL5KInterfaces(text)
+      importParsedInterfaces(parsed, 'L5K import')
+    } catch {
+      showToast('L5K import failed — could not parse file')
     }
   }
 
@@ -761,10 +874,12 @@ function LibraryPanel() {
     showToast(`"${iface.name}" saved to global library`)
   }
 
-  const filteredIfaces = userInterfaces.filter((i) =>
-    i.name.toLowerCase().includes(ifaceSearch.toLowerCase()) ||
-    i.description?.toLowerCase().includes(ifaceSearch.toLowerCase())
-  )
+  const filteredIfaces = userInterfaces.filter((i) => {
+    const q = ifaceSearch.toLowerCase()
+    const name = String(i.name ?? '').toLowerCase()
+    const desc = String(i.description ?? '').toLowerCase()
+    return name.includes(q) || desc.includes(q)
+  })
 
   const filteredInstances = interfaceInstances.filter((i) => {
     const linked = userInterfaces.find((ui) => ui.id === i.interfaceId)
@@ -837,6 +952,46 @@ function LibraryPanel() {
             value={ifaceSearch}
             onChange={(e) => setIfaceSearch(e.target.value)}
           />
+          <div
+            className={`mt-2 rounded-lg border border-dashed px-3 py-2 text-[11px] transition-colors ${
+              dragOverL5k
+                ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+                : 'border-gray-300 bg-gray-50 text-gray-500'
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragOverL5k(true)
+            }}
+            onDragLeave={() => setDragOverL5k(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOverL5k(false)
+              const file = e.dataTransfer.files?.[0]
+              if (file) void handleL5KFile(file)
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span>Drop a Studio 5000 `.L5K` file here (AOI/UDT definitions)</span>
+              <button
+                type="button"
+                className="px-2 py-1 rounded border border-gray-300 bg-white text-[10px] font-semibold text-gray-600 hover:text-indigo-600 hover:border-indigo-300"
+                onClick={() => l5kInputRef.current?.click()}
+              >
+                Select File
+              </button>
+            </div>
+            <input
+              ref={l5kInputRef}
+              type="file"
+              accept=".l5k"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void handleL5KFile(file)
+                e.currentTarget.value = ''
+              }}
+            />
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {filteredIfaces.length === 0 ? (
@@ -847,7 +1002,9 @@ function LibraryPanel() {
             </div>
           ) : (
             filteredIfaces.map((iface) => (
-              <InterfaceCard key={iface.id} iface={iface} onSaveToLibrary={handleSaveToLibrary} />
+              <CardErrorBoundary key={iface.id} name={iface.name ?? '?'}>
+                <InterfaceCard iface={iface} onSaveToLibrary={handleSaveToLibrary} />
+              </CardErrorBoundary>
             ))
           )}
         </div>

@@ -140,6 +140,7 @@ interface DiagramStore {
   userInterfaces: UserInterface[]
   interfaceInstances: InterfaceInstance[]
   addUserInterface: (iface: UserInterface) => void
+  addUserInterfacesBulk: (ifaces: UserInterface[]) => void
   updateUserInterface: (id: string, patch: Partial<UserInterface>) => void
   removeUserInterface: (id: string) => void
   addInterfaceInstance: (instance: InterfaceInstance) => void
@@ -536,6 +537,11 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
 
   addUserInterface: (iface) => set((s) => ({
     userInterfaces: [...s.userInterfaces, iface],
+    isDirty: true
+  })),
+
+  addUserInterfacesBulk: (ifaces) => set((s) => ({
+    userInterfaces: [...s.userInterfaces, ...ifaces],
     isDirty: true
   })),
 
