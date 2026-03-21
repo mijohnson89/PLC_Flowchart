@@ -10,9 +10,9 @@ import type {
   Plant, Area, Location,
   TreeFolder,
   Task, SubTask,
-  IORack, IOEntry
+  IORack, IOSlot, IOEntry
 } from '../types'
-import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
 const PROJECT_VERSION = '2.0'
 import { uid } from '../utils/uid'
@@ -237,6 +237,10 @@ interface DiagramStore {
   addIORack: (name: string) => string
   updateIORack: (id: string, patch: Partial<IORack>) => void
   removeIORack: (id: string) => void
+  ioSlots: IOSlot[]
+  addIOSlot: (rackId: string, name: string, catalogNumber?: string) => string
+  updateIOSlot: (id: string, patch: Partial<IOSlot>) => void
+  removeIOSlot: (id: string) => void
   ioEntries: IOEntry[]
   addIOEntry: (entry: IOEntry) => void
   updateIOEntry: (id: string, patch: Partial<IOEntry>) => void
@@ -344,7 +348,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     selectedNodeId: null,
     selectedEdgeId: null,
     viewingRevisionId: null,
-    openTabIds: id !== INTERFACES_TAB_ID && id !== TASKS_TAB_ID && id !== IO_TABLE_TAB_ID && !s.openTabIds.includes(id)
+    openTabIds: id !== INTERFACES_TAB_ID && id !== LOCATIONS_TAB_ID && id !== TASKS_TAB_ID && id !== IO_TABLE_TAB_ID && !s.openTabIds.includes(id)
       ? [...s.openTabIds, id]
       : s.openTabIds
   })),
@@ -893,9 +897,39 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   },
 
   removeIORack: (id) => {
+    set((s) => {
+      const slotIds = new Set(s.ioSlots.filter((sl) => sl.rackId === id).map((sl) => sl.id))
+      return {
+        ioRacks: s.ioRacks.filter((r) => r.id !== id),
+        ioSlots: s.ioSlots.filter((sl) => sl.rackId !== id),
+        ioEntries: s.ioEntries.filter((e) => !slotIds.has(e.slotId)),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
+  },
+
+  ioSlots: [],
+
+  addIOSlot: (rackId, name, catalogNumber) => {
+    const id = uid('slot')
+    const slot: IOSlot = { id, rackId, name, catalogNumber }
+    set((s) => ({ ioSlots: [...s.ioSlots, slot], isDirty: true }))
+    get().pushHistory()
+    return id
+  },
+
+  updateIOSlot: (id, patch) => {
     set((s) => ({
-      ioRacks: s.ioRacks.filter((r) => r.id !== id),
-      ioEntries: s.ioEntries.filter((e) => e.rackId !== id),
+      ioSlots: s.ioSlots.map((sl) => (sl.id === id ? { ...sl, ...patch } : sl)),
+      isDirty: true
+    }))
+  },
+
+  removeIOSlot: (id) => {
+    set((s) => ({
+      ioSlots: s.ioSlots.filter((sl) => sl.id !== id),
+      ioEntries: s.ioEntries.filter((e) => e.slotId !== id),
       isDirty: true
     }))
     get().pushHistory()
@@ -1029,6 +1063,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       matrixData: {},
       matrixShownInstances: {},
       ioRacks: [],
+      ioSlots: [],
       ioEntries: [],
       tasks: [],
       taskNotes: ''
@@ -1085,6 +1120,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       matrixData: project.matrixData ?? {},
       matrixShownInstances: project.matrixShownInstances ?? {},
       ioRacks: project.ioRacks ?? [],
+      ioSlots: project.ioSlots ?? [],
       ioEntries: project.ioEntries ?? [],
       tasks: project.tasks ?? [],
       taskNotes: project.taskNotes ?? ''
@@ -1092,7 +1128,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioEntries, tasks, taskNotes } = get()
+    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
@@ -1110,6 +1146,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       matrixData,
       matrixShownInstances,
       ioRacks,
+      ioSlots,
       ioEntries,
       tasks,
       taskNotes

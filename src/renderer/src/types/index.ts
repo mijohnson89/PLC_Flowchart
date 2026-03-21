@@ -176,6 +176,10 @@ export interface Location {
   areaId: string
 }
 
+// ── Locations ────────────────────────────────────────────────────────────────
+
+export const LOCATIONS_TAB_ID = '__locations__'
+
 // ── Interfaces ───────────────────────────────────────────────────────────────
 
 export const INTERFACES_TAB_ID = '__interfaces__'
@@ -244,10 +248,16 @@ export interface IORack {
   name: string
 }
 
-export interface IOEntry {
+export interface IOSlot {
   id: string
   rackId: string
-  slot: string
+  name: string
+  catalogNumber?: string
+}
+
+export interface IOEntry {
+  id: string
+  slotId: string
   channel: string
   drawingTag: string
   drawingReference: string
@@ -255,6 +265,7 @@ export interface IOEntry {
   description2: string
   description3: string
   ioType: IOType
+  unitOfMeasure: string
   minRawScale: string
   maxRawScale: string
   minEUScale: string
@@ -316,6 +327,7 @@ export interface DiagramProject {
   matrixData?: MatrixData
   matrixShownInstances?: Record<string, string[]>
   ioRacks?: IORack[]
+  ioSlots?: IOSlot[]
   ioEntries?: IOEntry[]
   tasks?: Task[]
   taskNotes?: string

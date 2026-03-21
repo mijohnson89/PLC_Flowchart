@@ -1,13 +1,14 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
   Plus, Trash2, Copy, Download, Upload, Search, X,
-  ChevronDown, ChevronRight, Server, Pencil
+  ChevronDown, ChevronRight, Server, Pencil, Cpu
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { IOEntry, IOType, IORack } from '../types'
+import type { IOEntry, IOType, IORack, IOSlot } from '../types'
 import { uid } from '../utils/uid'
 
 const IO_TYPES: IOType[] = ['DI', 'DO', 'AI', 'AO', 'RTD', 'TC', '']
+const DIGITAL_TYPES: Set<IOType> = new Set(['DI', 'DO'])
 
 const IO_TYPE_COLORS: Record<IOType, { bg: string; text: string; border: string }> = {
   DI:  { bg: 'bg-emerald-50',  text: 'text-emerald-700',  border: 'border-emerald-200' },
@@ -25,33 +26,35 @@ interface ColumnDef {
   width: number
   align?: 'center' | 'right'
   type?: 'text' | 'ioType'
+  analogOnly?: boolean
 }
 
 const COLUMNS: ColumnDef[] = [
-  { key: 'slot',             label: 'Slot',              width: 60,  align: 'center' },
-  { key: 'channel',          label: 'Channel',           width: 70,  align: 'center' },
+  { key: 'channel',          label: 'Ch',               width: 50,  align: 'center' },
   { key: 'drawingTag',       label: 'Drawing Tag',       width: 130 },
   { key: 'drawingReference', label: 'Drawing Ref',       width: 120 },
   { key: 'description1',     label: 'Description 1',     width: 180 },
   { key: 'description2',     label: 'Description 2',     width: 160 },
   { key: 'description3',     label: 'Description 3',     width: 160 },
   { key: 'ioType',           label: 'IO Type',           width: 80,  align: 'center', type: 'ioType' },
-  { key: 'minRawScale',      label: 'Min Raw',           width: 80,  align: 'right' },
-  { key: 'maxRawScale',      label: 'Max Raw',           width: 80,  align: 'right' },
-  { key: 'minEUScale',       label: 'Min EU',            width: 80,  align: 'right' },
-  { key: 'maxEUScale',       label: 'Max EU',            width: 80,  align: 'right' },
+  { key: 'unitOfMeasure',    label: 'Unit',              width: 80,  analogOnly: true },
+  { key: 'minRawScale',      label: 'Min Raw',           width: 80,  align: 'right', analogOnly: true },
+  { key: 'maxRawScale',      label: 'Max Raw',           width: 80,  align: 'right', analogOnly: true },
+  { key: 'minEUScale',       label: 'Min EU',            width: 80,  align: 'right', analogOnly: true },
+  { key: 'maxEUScale',       label: 'Max EU',            width: 80,  align: 'right', analogOnly: true },
 ]
 
-const ALL_EXPORT_COLS = ['Rack', ...COLUMNS.map((c) => c.label)]
+const ALL_EXPORT_COLS = ['Rack', 'Slot', ...COLUMNS.map((c) => c.label)]
 
-function emptyEntry(rackId: string): IOEntry {
+function emptyEntry(slotId: string): IOEntry {
   return {
     id: uid('io'),
-    rackId,
-    slot: '', channel: '',
+    slotId,
+    channel: '',
     drawingTag: '', drawingReference: '',
     description1: '', description2: '', description3: '',
     ioType: '' as IOType,
+    unitOfMeasure: '',
     minRawScale: '', maxRawScale: '',
     minEUScale: '', maxEUScale: ''
   }
@@ -86,7 +89,6 @@ function EditableCell({
 }) {
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => { if (isSelected) ref.current?.focus() }, [isSelected])
-
   return (
     <input
       ref={ref}
@@ -101,8 +103,8 @@ function EditableCell({
   )
 }
 
-function InlineRename({ value, onCommit, onCancel }: {
-  value: string; onCommit: (v: string) => void; onCancel: () => void
+function InlineRename({ value, onCommit, onCancel, className }: {
+  value: string; onCommit: (v: string) => void; onCancel: () => void; className?: string
 }) {
   const [draft, setDraft] = useState(value)
   const ref = useRef<HTMLInputElement>(null)
@@ -120,18 +122,19 @@ function InlineRename({ value, onCommit, onCancel }: {
       }}
       onBlur={() => { const t = draft.trim(); if (t && t !== value) onCommit(t); else onCancel() }}
       onClick={(e) => e.stopPropagation()}
-      className="text-sm font-bold bg-white border border-indigo-400 rounded px-2 py-0.5 outline-none w-48"
+      className={className ?? 'text-sm font-bold bg-white border border-indigo-400 rounded px-2 py-0.5 outline-none w-48'}
     />
   )
 }
 
-// ── Rack section ─────────────────────────────────────────────────────────────
+// ── Slot section ─────────────────────────────────────────────────────────────
 
-function RackSection({
-  rack, entries, filter, filterType,
+function SlotSection({
+  slot, slotIndex, entries, filter, filterType,
   selectedIds, activeCell, onSelectRow, onSetActiveCell,
 }: {
-  rack: IORack
+  slot: IOSlot
+  slotIndex: number
   entries: IOEntry[]
   filter: string
   filterType: IOType | 'ALL'
@@ -140,8 +143,8 @@ function RackSection({
   onSelectRow: (id: string, shift: boolean) => void
   onSetActiveCell: (cell: { rowId: string; colKey: string }) => void
 }) {
-  const updateIORack = useDiagramStore((s) => s.updateIORack)
-  const removeIORack = useDiagramStore((s) => s.removeIORack)
+  const updateIOSlot = useDiagramStore((s) => s.updateIOSlot)
+  const removeIOSlot = useDiagramStore((s) => s.removeIOSlot)
   const addIOEntry = useDiagramStore((s) => s.addIOEntry)
   const updateIOEntry = useDiagramStore((s) => s.updateIOEntry)
   const removeIOEntry = useDiagramStore((s) => s.removeIOEntry)
@@ -160,39 +163,240 @@ function RackSection({
         e.description1.toLowerCase().includes(q) ||
         e.description2.toLowerCase().includes(q) ||
         e.description3.toLowerCase().includes(q) ||
-        e.slot.toLowerCase().includes(q) ||
         e.channel.toLowerCase().includes(q)
       )
     }
     return rows
   }, [entries, filter, filterType])
 
-  const stats = useMemo(() => {
-    const c: Record<string, number> = {}
-    entries.forEach((e) => { if (e.ioType) c[e.ioType] = (c[e.ioType] || 0) + 1 })
-    return c
-  }, [entries])
-
   const handleAddRow = useCallback(() => {
-    const entry = emptyEntry(rack.id)
+    const entry = emptyEntry(slot.id)
+    entry.channel = String(entries.length)
     addIOEntry(entry)
     setCollapsed(false)
-    setTimeout(() => onSetActiveCell({ rowId: entry.id, colKey: 'slot' }), 50)
-  }, [rack.id, addIOEntry, onSetActiveCell])
+    setTimeout(() => onSetActiveCell({ rowId: entry.id, colKey: 'channel' }), 50)
+  }, [slot.id, entries.length, addIOEntry, onSetActiveCell])
 
-  const handleDeleteRack = useCallback(() => {
-    removeIORack(rack.id)
-  }, [rack.id, removeIORack])
+  const catalogLabel = slot.catalogNumber ? ` · ${slot.catalogNumber}` : ''
+
+  return (
+    <div className="border-b border-gray-100 last:border-b-0">
+      {/* Slot header */}
+      <div className="flex items-center gap-1.5 pl-10 pr-4 py-1.5 bg-white hover:bg-gray-50/60 transition-colors">
+        <button onClick={() => setCollapsed((v) => !v)} className="flex-shrink-0 p-0.5 text-gray-300 hover:text-gray-500 rounded">
+          {collapsed
+            ? <ChevronRight size={12} />
+            : <ChevronDown size={12} />
+          }
+        </button>
+        <Cpu size={12} className="text-indigo-400 flex-shrink-0" />
+        <span className="text-[11px] font-bold text-indigo-600 tabular-nums w-12 flex-shrink-0">
+          Slot {slotIndex}
+        </span>
+        {renaming ? (
+          <InlineRename
+            value={slot.name}
+            onCommit={(v) => { updateIOSlot(slot.id, { name: v }); setRenaming(false) }}
+            onCancel={() => setRenaming(false)}
+            className="text-[11px] font-medium bg-white border border-indigo-400 rounded px-1.5 py-0.5 outline-none w-36"
+          />
+        ) : (
+          <span
+            className="text-[11px] font-medium text-gray-600 cursor-pointer hover:text-indigo-600 transition-colors truncate"
+            onDoubleClick={() => setRenaming(true)}
+            title={`${slot.name}${catalogLabel} — double-click to rename`}
+          >
+            {slot.name}
+            {slot.catalogNumber && (
+              <span className="ml-1 text-[10px] text-gray-400 font-normal">{slot.catalogNumber}</span>
+            )}
+          </span>
+        )}
+        <span className="text-[9px] text-gray-400 tabular-nums ml-1">
+          {entries.length}ch
+        </span>
+
+        <div className="flex-1" />
+
+        <button
+          onClick={() => setRenaming(true)}
+          className="p-0.5 text-gray-300 hover:text-indigo-600 rounded transition-colors opacity-0 group-hover:opacity-100"
+          title="Rename slot"
+        >
+          <Pencil size={10} />
+        </button>
+        <button
+          onClick={handleAddRow}
+          className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+        >
+          <Plus size={9} /> Ch
+        </button>
+        <button
+          onClick={() => removeIOSlot(slot.id)}
+          className="p-0.5 text-gray-300 hover:text-red-500 rounded transition-colors"
+          title="Delete slot and all channels"
+        >
+          <Trash2 size={10} />
+        </button>
+      </div>
+
+      {/* Channel table */}
+      {!collapsed && (
+        filtered.length === 0 ? (
+          entries.length === 0 ? (
+            <div className="pl-16 pr-4 py-2">
+              <button
+                onClick={handleAddRow}
+                className="text-[10px] text-gray-400 hover:text-indigo-600 transition-colors"
+              >
+                <Plus size={10} className="inline mr-0.5 -mt-0.5" />Add first channel
+              </button>
+            </div>
+          ) : (
+            <div className="pl-16 pr-4 py-2 text-[10px] text-gray-400">No matching channels</div>
+          )
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="border-collapse text-xs w-full" style={{ minWidth: 'max-content' }}>
+              <thead>
+                <tr className="bg-gray-50/50">
+                  <th className="w-8 border-b border-r border-gray-100 px-1" />
+                  <th className="w-8 border-b border-r border-gray-100 text-[9px] font-semibold text-gray-400 px-1">#</th>
+                  {COLUMNS.map((col) => (
+                    <th
+                      key={col.key}
+                      className="border-b border-r border-gray-100 px-2 py-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap"
+                      style={{ minWidth: col.width, textAlign: col.align ?? 'left' }}
+                    >
+                      {col.label}
+                    </th>
+                  ))}
+                  <th className="border-b border-gray-100 w-7" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry, rowIdx) => {
+                  const isSelected = selectedIds.has(entry.id)
+                  return (
+                    <tr
+                      key={entry.id}
+                      className={`group transition-colors ${isSelected ? 'bg-indigo-50' : 'hover:bg-gray-50/60'}`}
+                    >
+                      <td className="border-b border-r border-gray-100 px-1 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => onSelectRow(entry.id, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                      </td>
+                      <td className="border-b border-r border-gray-100 text-center text-[10px] text-gray-300 font-mono tabular-nums">
+                        {rowIdx + 1}
+                      </td>
+                      {COLUMNS.map((col) => {
+                        const isDigital = DIGITAL_TYPES.has(entry.ioType)
+                        const disabled = !!(col.analogOnly && isDigital)
+                        return (
+                          <td
+                            key={col.key}
+                            className={`border-b border-r border-gray-100 p-0 ${
+                              disabled ? 'bg-gray-100' : ''
+                            } ${
+                              !disabled && activeCell?.rowId === entry.id && activeCell?.colKey === col.key
+                                ? 'ring-2 ring-inset ring-indigo-400' : ''
+                            }`}
+                            style={{ minWidth: col.width, height: 30 }}
+                          >
+                            {disabled ? (
+                              <span className="block w-full h-full" />
+                            ) : col.type === 'ioType' ? (
+                              <IOTypeSelect
+                                value={entry.ioType}
+                                onChange={(v) => updateIOEntry(entry.id, { ioType: v })}
+                              />
+                            ) : (
+                              <EditableCell
+                                value={String(entry[col.key] ?? '')}
+                                onChange={(v) => updateIOEntry(entry.id, { [col.key]: v })}
+                                align={col.align}
+                                isSelected={activeCell?.rowId === entry.id && activeCell?.colKey === col.key}
+                                onFocus={() => onSetActiveCell({ rowId: entry.id, colKey: col.key })}
+                              />
+                            )}
+                          </td>
+                        )
+                      })}
+                      <td className="border-b border-gray-100 px-0.5">
+                        <button
+                          onClick={() => removeIOEntry(entry.id)}
+                          className="p-0.5 text-gray-300 hover:text-red-500 rounded opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete channel"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ── Rack section ─────────────────────────────────────────────────────────────
+
+function RackSection({
+  rack, slots, entriesBySlot, filter, filterType,
+  selectedIds, activeCell, onSelectRow, onSetActiveCell,
+}: {
+  rack: IORack
+  slots: IOSlot[]
+  entriesBySlot: Map<string, IOEntry[]>
+  filter: string
+  filterType: IOType | 'ALL'
+  selectedIds: Set<string>
+  activeCell: { rowId: string; colKey: string } | null
+  onSelectRow: (id: string, shift: boolean) => void
+  onSetActiveCell: (cell: { rowId: string; colKey: string }) => void
+}) {
+  const updateIORack = useDiagramStore((s) => s.updateIORack)
+  const removeIORack = useDiagramStore((s) => s.removeIORack)
+  const addIOSlot = useDiagramStore((s) => s.addIOSlot)
+
+  const [collapsed, setCollapsed] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+
+  const totalChannels = useMemo(() => {
+    let n = 0
+    for (const sl of slots) n += (entriesBySlot.get(sl.id)?.length ?? 0)
+    return n
+  }, [slots, entriesBySlot])
+
+  const stats = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const sl of slots) {
+      for (const e of entriesBySlot.get(sl.id) ?? []) {
+        if (e.ioType) c[e.ioType] = (c[e.ioType] || 0) + 1
+      }
+    }
+    return c
+  }, [slots, entriesBySlot])
+
+  const handleAddSlot = useCallback(() => {
+    addIOSlot(rack.id, `Module ${slots.length}`)
+    setCollapsed(false)
+  }, [rack.id, slots.length, addIOSlot])
 
   return (
     <div className="border-b border-gray-200">
       {/* Rack header */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-50 transition-colors">
+      <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-50 transition-colors group">
         <button onClick={() => setCollapsed((v) => !v)} className="flex-shrink-0 p-0.5 text-gray-400 hover:text-gray-600 rounded">
-          {collapsed
-            ? <ChevronRight size={14} className="text-gray-400" />
-            : <ChevronDown size={14} className="text-gray-400" />
-          }
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <Server size={14} className="text-indigo-500 flex-shrink-0" />
         {renaming ? (
@@ -212,10 +416,9 @@ function RackSection({
         )}
 
         <span className="text-[10px] text-gray-400 tabular-nums ml-1">
-          {entries.length} channel{entries.length !== 1 ? 's' : ''}
+          {slots.length} slot{slots.length !== 1 ? 's' : ''} · {totalChannels} ch
         </span>
 
-        {/* IO type mini-stats for this rack */}
         <div className="flex items-center gap-0.5 ml-2">
           {IO_TYPES.filter(Boolean).map((t) => {
             const count = stats[t]
@@ -233,119 +436,54 @@ function RackSection({
 
         <button
           onClick={() => setRenaming(true)}
-          className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"
+          className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors opacity-0 group-hover:opacity-100"
           title="Rename rack"
         >
           <Pencil size={11} />
         </button>
         <button
-          onClick={handleAddRow}
+          onClick={handleAddSlot}
           className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
         >
-          <Plus size={10} /> Add Row
+          <Cpu size={10} /> Add Slot
         </button>
         <button
-          onClick={handleDeleteRack}
+          onClick={() => removeIORack(rack.id)}
           className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
-          title="Delete rack and all its entries"
+          title="Delete rack and all slots"
         >
           <Trash2 size={11} />
         </button>
       </div>
 
-      {/* Table */}
+      {/* Slots */}
       {!collapsed && (
-        filtered.length === 0 ? (
-          <div className="px-8 py-4 text-center">
-            {entries.length === 0 ? (
-              <button
-                onClick={handleAddRow}
-                className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors"
-              >
-                <Plus size={12} className="inline mr-1 -mt-0.5" />
-                Add first channel to this rack
-              </button>
-            ) : (
-              <span className="text-[11px] text-gray-400">No matching entries in this rack</span>
-            )}
+        slots.length === 0 ? (
+          <div className="px-10 py-3 text-center">
+            <button
+              onClick={handleAddSlot}
+              className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors"
+            >
+              <Cpu size={12} className="inline mr-1 -mt-0.5" />
+              Add first slot to this rack
+            </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="border-collapse text-xs w-full" style={{ minWidth: 'max-content' }}>
-              <thead>
-                <tr className="bg-gray-50/80">
-                  <th className="w-8 border-b border-r border-gray-200 px-1" />
-                  <th className="w-10 border-b border-r border-gray-200 text-[10px] font-semibold text-gray-400 px-1">#</th>
-                  {COLUMNS.map((col) => (
-                    <th
-                      key={col.key}
-                      className="border-b border-r border-gray-200 px-2 py-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                      style={{ minWidth: col.width, textAlign: col.align ?? 'left' }}
-                    >
-                      {col.label}
-                    </th>
-                  ))}
-                  <th className="border-b border-gray-200 w-8" />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((entry, rowIdx) => {
-                  const isSelected = selectedIds.has(entry.id)
-                  return (
-                    <tr
-                      key={entry.id}
-                      className={`group transition-colors ${isSelected ? 'bg-indigo-50' : 'hover:bg-gray-50/60'}`}
-                    >
-                      <td className="border-b border-r border-gray-100 px-1 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => onSelectRow(entry.id, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                      </td>
-                      <td className="border-b border-r border-gray-100 text-center text-[10px] text-gray-400 font-mono tabular-nums">
-                        {rowIdx + 1}
-                      </td>
-                      {COLUMNS.map((col) => (
-                        <td
-                          key={col.key}
-                          className={`border-b border-r border-gray-100 p-0 ${
-                            activeCell?.rowId === entry.id && activeCell?.colKey === col.key
-                              ? 'ring-2 ring-inset ring-indigo-400' : ''
-                          }`}
-                          style={{ minWidth: col.width, height: 32 }}
-                        >
-                          {col.type === 'ioType' ? (
-                            <IOTypeSelect
-                              value={entry.ioType}
-                              onChange={(v) => updateIOEntry(entry.id, { ioType: v })}
-                            />
-                          ) : (
-                            <EditableCell
-                              value={String(entry[col.key] ?? '')}
-                              onChange={(v) => updateIOEntry(entry.id, { [col.key]: v })}
-                              align={col.align}
-                              isSelected={activeCell?.rowId === entry.id && activeCell?.colKey === col.key}
-                              onFocus={() => onSetActiveCell({ rowId: entry.id, colKey: col.key })}
-                            />
-                          )}
-                        </td>
-                      ))}
-                      <td className="border-b border-gray-100 px-1">
-                        <button
-                          onClick={() => removeIOEntry(entry.id)}
-                          className="p-1 text-gray-300 hover:text-red-500 rounded opacity-0 group-hover:opacity-100 transition-all"
-                          title="Delete row"
-                        >
-                          <Trash2 size={11} />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div>
+            {slots.map((slot, idx) => (
+              <SlotSection
+                key={slot.id}
+                slot={slot}
+                slotIndex={idx}
+                entries={entriesBySlot.get(slot.id) ?? []}
+                filter={filter}
+                filterType={filterType}
+                selectedIds={selectedIds}
+                activeCell={activeCell}
+                onSelectRow={onSelectRow}
+                onSetActiveCell={onSetActiveCell}
+              />
+            ))}
           </div>
         )
       )}
@@ -357,6 +495,7 @@ function RackSection({
 
 export function IOTablePanel() {
   const ioRacks = useDiagramStore((s) => s.ioRacks)
+  const ioSlots = useDiagramStore((s) => s.ioSlots)
   const ioEntries = useDiagramStore((s) => s.ioEntries)
   const addIORack = useDiagramStore((s) => s.addIORack)
   const addIOEntry = useDiagramStore((s) => s.addIOEntry)
@@ -367,15 +506,25 @@ export function IOTablePanel() {
   const [filter, setFilter] = useState('')
   const [filterType, setFilterType] = useState<IOType | 'ALL'>('ALL')
 
-  const entriesByRack = useMemo(() => {
-    const map = new Map<string, IOEntry[]>()
+  const slotsByRack = useMemo(() => {
+    const map = new Map<string, IOSlot[]>()
     ioRacks.forEach((r) => map.set(r.id, []))
+    ioSlots.forEach((sl) => {
+      const list = map.get(sl.rackId)
+      if (list) list.push(sl)
+    })
+    return map
+  }, [ioRacks, ioSlots])
+
+  const entriesBySlot = useMemo(() => {
+    const map = new Map<string, IOEntry[]>()
+    ioSlots.forEach((sl) => map.set(sl.id, []))
     ioEntries.forEach((e) => {
-      const list = map.get(e.rackId)
+      const list = map.get(e.slotId)
       if (list) list.push(e)
     })
     return map
-  }, [ioRacks, ioEntries])
+  }, [ioSlots, ioEntries])
 
   const globalStats = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -384,8 +533,7 @@ export function IOTablePanel() {
   }, [ioEntries])
 
   const handleAddRack = useCallback(() => {
-    const num = ioRacks.length
-    addIORack(`Rack ${num}`)
+    addIORack(`Rack ${ioRacks.length}`)
   }, [ioRacks.length, addIORack])
 
   const handleRowSelect = useCallback((id: string, shift: boolean) => {
@@ -411,9 +559,18 @@ export function IOTablePanel() {
 
   const handleExportCSV = useCallback(() => {
     const rackMap = new Map(ioRacks.map((r) => [r.id, r.name]))
+    const slotMap = new Map(ioSlots.map((sl) => [sl.id, sl]))
+    const slotIndexMap = new Map<string, number>()
+    for (const [rackId, slots] of slotsByRack) {
+      slots.forEach((sl, idx) => slotIndexMap.set(sl.id, idx))
+    }
+
     const header = ALL_EXPORT_COLS.join(',')
     const rows = ioEntries.map((e) => {
-      const vals = [rackMap.get(e.rackId) ?? '', ...COLUMNS.map((c) => String(e[c.key] ?? ''))]
+      const sl = slotMap.get(e.slotId)
+      const rackName = sl ? (rackMap.get(sl.rackId) ?? '') : ''
+      const slotNum = slotIndexMap.get(e.slotId) ?? ''
+      const vals = [rackName, String(slotNum), ...COLUMNS.map((c) => String(e[c.key] ?? ''))]
       return vals.map((v) => v.includes(',') || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v).join(',')
     })
     const csv = [header, ...rows].join('\n')
@@ -424,7 +581,7 @@ export function IOTablePanel() {
     a.download = 'io-table.csv'
     a.click()
     URL.revokeObjectURL(url)
-  }, [ioRacks, ioEntries])
+  }, [ioRacks, ioSlots, ioEntries, slotsByRack])
 
   const handleImportCSV = useCallback(() => {
     const input = document.createElement('input')
@@ -437,26 +594,40 @@ export function IOTablePanel() {
       const lines = text.split('\n').filter(Boolean)
       if (lines.length < 2) return
 
-      const rackMap = new Map(ioRacks.map((r) => [r.name.toLowerCase(), r.id]))
+      const store = useDiagramStore.getState()
+      const rackNameMap = new Map(store.ioRacks.map((r) => [r.name.toLowerCase(), r.id]))
+      const slotKeyMap = new Map<string, string>()
+      for (const sl of store.ioSlots) {
+        const rack = store.ioRacks.find((r) => r.id === sl.rackId)
+        if (rack) slotKeyMap.set(`${rack.name.toLowerCase()}::${sl.name.toLowerCase()}`, sl.id)
+      }
+
       const colKeys = COLUMNS.map((c) => c.key)
 
       for (let i = 1; i < lines.length; i++) {
         const vals = parseCSVLine(lines[i])
-        const rackName = vals[0]?.trim() ?? `Rack ${ioRacks.length}`
-        let rackId = rackMap.get(rackName.toLowerCase())
+        const rackName = vals[0]?.trim() || `Rack ${store.ioRacks.length}`
+        const slotName = vals[1]?.trim() || '0'
+        let rackId = rackNameMap.get(rackName.toLowerCase())
         if (!rackId) {
-          rackId = addIORack(rackName)
-          rackMap.set(rackName.toLowerCase(), rackId)
+          rackId = store.addIORack(rackName)
+          rackNameMap.set(rackName.toLowerCase(), rackId)
         }
-        const entry = emptyEntry(rackId)
+        const slotKey = `${rackName.toLowerCase()}::${slotName.toLowerCase()}`
+        let slotId = slotKeyMap.get(slotKey)
+        if (!slotId) {
+          slotId = store.addIOSlot(rackId, slotName)
+          slotKeyMap.set(slotKey, slotId)
+        }
+        const entry = emptyEntry(slotId)
         colKeys.forEach((key, idx) => {
-          if (vals[idx + 1] !== undefined) (entry as Record<string, string>)[key] = vals[idx + 1]
+          if (vals[idx + 2] !== undefined) (entry as Record<string, string>)[key] = vals[idx + 2]
         })
-        addIOEntry(entry)
+        store.addIOEntry(entry)
       }
     }
     input.click()
-  }, [ioRacks, addIORack, addIOEntry])
+  }, [])
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-white">
@@ -490,7 +661,6 @@ export function IOTablePanel() {
 
         <div className="flex-1" />
 
-        {/* IO type stats */}
         <div className="flex items-center gap-1 mr-2">
           {IO_TYPES.filter(Boolean).map((t) => (
             <button
@@ -507,7 +677,6 @@ export function IOTablePanel() {
           ))}
         </div>
 
-        {/* Search */}
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -542,7 +711,7 @@ export function IOTablePanel() {
         </button>
 
         <span className="text-[10px] text-gray-400 tabular-nums ml-1">
-          {ioRacks.length} rack{ioRacks.length !== 1 ? 's' : ''} · {ioEntries.length} row{ioEntries.length !== 1 ? 's' : ''}
+          {ioRacks.length} rack{ioRacks.length !== 1 ? 's' : ''} · {ioEntries.length} ch
         </span>
       </div>
 
@@ -555,7 +724,7 @@ export function IOTablePanel() {
             </div>
             <h3 className="text-sm font-semibold text-gray-700 mb-1">No IO racks yet</h3>
             <p className="text-xs text-gray-400 mb-4 leading-relaxed">
-              Add a rack to start defining your IO mappings. Each rack contains slots and channels.
+              Add a rack to start defining your IO. Each rack contains slots, and each slot contains channels.
             </p>
             <div className="flex gap-2 justify-center">
               <button
@@ -579,7 +748,8 @@ export function IOTablePanel() {
             <RackSection
               key={rack.id}
               rack={rack}
-              entries={entriesByRack.get(rack.id) ?? []}
+              slots={slotsByRack.get(rack.id) ?? []}
+              entriesBySlot={entriesBySlot}
               filter={filter}
               filterType={filterType}
               selectedIds={selectedIds}

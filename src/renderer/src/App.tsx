@@ -15,7 +15,8 @@ import { DiagramTreeView } from './components/DiagramTreeView'
 import { MatrixView } from './components/MatrixView'
 import { TasksPanel } from './components/TasksPanel'
 import { IOTablePanel } from './components/IOTablePanel'
-import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from './types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from './types'
+import { LocationsPanel } from './components/LocationsPanel'
 import { Grid3x3 } from 'lucide-react'
 
 // ── Error boundary ────────────────────────────────────────────────────────────
@@ -98,9 +99,10 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null)
 
   const isInterfacesTab = activeTabId === INTERFACES_TAB_ID
+  const isLocationsTab = activeTabId === LOCATIONS_TAB_ID
   const isTasksTab = activeTabId === TASKS_TAB_ID
   const isIOTableTab = activeTabId === IO_TABLE_TAB_ID
-  const isSpecialTab = isInterfacesTab || isTasksTab || isIOTableTab
+  const isSpecialTab = isInterfacesTab || isLocationsTab || isTasksTab || isIOTableTab
   const isFlowchart = !isSpecialTab && activeTab?.type === 'flowchart'
   const readOnly = isViewingRevision
 
@@ -138,6 +140,8 @@ export default function App() {
             <main className="flex-1 overflow-hidden relative flex">
               {isInterfacesTab ? (
                 <InterfacesPanel />
+              ) : isLocationsTab ? (
+                <LocationsPanel />
               ) : isTasksTab ? (
                 <TasksPanel />
               ) : isIOTableTab ? (

@@ -2,10 +2,11 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronDown, ChevronRight, Network, AlignJustify,
   FolderClosed, FolderOpen, Layers, FolderPlus,
-  Pencil, Trash2, Copy, FolderInput, Plus, ClipboardList, TableProperties
+  Pencil, Trash2, Copy, FolderInput, Plus, ClipboardList, TableProperties,
+  Building2
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 import type { DiagramTab, DiagramMode, TreeFolder } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
@@ -283,6 +284,7 @@ export function DiagramTreeView() {
 
   const tree = useMemo(() => buildTree(folders, tabs), [folders, tabs])
   const isInterfacesActive = activeTabId === INTERFACES_TAB_ID
+  const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
   const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
 
@@ -401,6 +403,15 @@ export function DiagramTreeView() {
           isActive={isInterfacesActive}
           depth={0}
           onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+        />
+
+        {/* Locations entry */}
+        <TreeLeafButton
+          label="Locations"
+          icon={<Building2 size={11} />}
+          isActive={isLocationsActive}
+          depth={0}
+          onClick={() => setActiveTab(LOCATIONS_TAB_ID)}
         />
 
         {/* Tasks entry */}

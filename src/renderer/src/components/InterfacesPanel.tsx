@@ -12,7 +12,7 @@ import type {
 } from '../types'
 import { MatrixView } from './MatrixView'
 import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
-import { parseL5KInterfaces, parseL5KSequences, parseL5KTasks, l5kSequenceToFlowchart, parseL5KControllerName, parseL5KProgramTags } from '../utils/l5kImport'
+import { parseL5KInterfaces, parseL5KSequences, parseL5KTasks, l5kSequenceToFlowchart, parseL5KControllerName, parseL5KProgramTags, parseL5KIOModules } from '../utils/l5kImport'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1185,12 +1185,50 @@ function LibraryPanel() {
         seqCount++
       }
 
+      // ── IO Module auto-import ───────────────────────────────────────
+      const ioResult = parseL5KIOModules(text)
+      let ioCount = 0
+      if (ioResult.racks.length > 0) {
+        const ioSnap = useDiagramStore.getState()
+        const existingRackNames = new Set(ioSnap.ioRacks.map((r) => r.name.toLowerCase()))
+
+        // Create racks (skip existing by name)
+        for (const rack of ioResult.racks) {
+          if (existingRackNames.has(rack.name.toLowerCase())) continue
+          ioSnap.addIORack(rack.name)
+        }
+
+        const freshSnap = useDiagramStore.getState()
+        const rackNameToId = new Map(freshSnap.ioRacks.map((r) => [r.name.toLowerCase(), r.id]))
+        const importedRackIdMap = new Map(ioResult.racks.map((r) => [r.id, r.name.toLowerCase()]))
+
+        // Create slots, mapping imported rackId → real rackId
+        const slotIdMap = new Map<string, string>()
+        for (const slot of ioResult.slots) {
+          const rackName = importedRackIdMap.get(slot.rackId)
+          if (!rackName) continue
+          const realRackId = rackNameToId.get(rackName)
+          if (!realRackId) continue
+          const realSlotId = freshSnap.addIOSlot(realRackId, slot.name, slot.catalogNumber)
+          slotIdMap.set(slot.id, realSlotId)
+        }
+
+        // Create entries, mapping imported slotId → real slotId
+        for (const entry of ioResult.entries) {
+          const realSlotId = slotIdMap.get(entry.slotId)
+          if (!realSlotId) continue
+          freshSnap.addIOEntry({ ...entry, id: uid('io'), slotId: realSlotId })
+          ioCount++
+        }
+      }
+
       const parts: string[] = []
       if (ifaceMsg) parts.push(ifaceMsg)
       if (seqCount > 0) parts.push(`${seqCount} sequence${seqCount !== 1 ? 's' : ''} as flowchart${seqCount !== 1 ? 's' : ''}`)
       if (instCount > 0) parts.push(`${instCount} instance${instCount !== 1 ? 's' : ''}`)
+      if (ioCount > 0) parts.push(`${ioResult.racks.length} rack${ioResult.racks.length !== 1 ? 's' : ''} · ${ioResult.slots.length} slot${ioResult.slots.length !== 1 ? 's' : ''} · ${ioCount} IO channel${ioCount !== 1 ? 's' : ''}`)
       if (parts.length > 0) showToast(`L5K: ${parts.join(' · ')}`)
-      else if (selectedIfaces.length === 0 && sequences.length === 0) showToast('L5K: no AOI/UDT or sequence definitions found')
+      else if (selectedIfaces.length === 0 && sequences.length === 0) showToast('L5K: no AOI/UDT, sequences or IO modules found')
     } catch {
       showToast('L5K import failed — could not parse file')
     }

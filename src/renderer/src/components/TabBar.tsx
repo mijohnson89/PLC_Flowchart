@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties } from 'lucide-react'
+import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { DiagramMode, DiagramTab } from '../types'
-import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
   flowchart: <Network size={12} />,
@@ -102,6 +102,7 @@ export function TabBar() {
   const editInputRef = useRef<HTMLInputElement>(null)
 
   const isInterfacesActive = activeTabId === INTERFACES_TAB_ID
+  const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
   const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
   const openTabs = openTabIds
@@ -151,6 +152,25 @@ export function TabBar() {
             <Layers size={12} />
           </span>
           <span>Interfaces</span>
+        </div>
+
+        {/* Static Locations tab */}
+        <div
+          onClick={() => setActiveTab(LOCATIONS_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isLocationsActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Plant hierarchy — plants, areas and locations"
+        >
+          <span className={isLocationsActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <Building2 size={12} />
+          </span>
+          <span>Locations</span>
         </div>
 
         {/* Static Tasks tab */}
