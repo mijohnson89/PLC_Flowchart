@@ -4,10 +4,11 @@ import {
   Network, AlignJustify, Link2, Unlink,
   ClipboardList, CheckSquare, Square,
   Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
-  Heading1, Heading2, Strikethrough, StickyNote, Minus
+  Heading1, Heading2, Strikethrough, StickyNote, Minus,
+  Settings2, Zap
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { Task, SubTask } from '../types'
+import type { Task, SubTask, TaskAutoGenSettings } from '../types'
 
 // ── Progress bar ─────────────────────────────────────────────────────────────
 
@@ -500,6 +501,60 @@ function RichTextNotes() {
   )
 }
 
+// ── Auto-gen settings popover ─────────────────────────────────────────────────
+
+const AUTO_GEN_RULES: { key: keyof TaskAutoGenSettings; label: string; desc: string }[] = [
+  { key: 'ioCardFAT',       label: 'IO Card → FAT',        desc: 'Each IO card (slot) creates an IO check under "Factory Acceptance Test"' },
+  { key: 'analogSAT',       label: 'Analog → SAT',         desc: 'Each analog channel creates a scaling check under "Site Acceptance Test"' },
+  { key: 'sequenceTesting',  label: 'Sequence → Testing',   desc: 'Each new flowchart creates an entry under "Sequences"' },
+  { key: 'deviceTesting',    label: 'AOI Instance → Device', desc: 'Each AOI instance creates an entry under "Devices"' },
+]
+
+function AutoGenSettingsPopover({ onClose }: { onClose: () => void }) {
+  const autoGen = useDiagramStore((s) => s.taskAutoGen)
+  const setAutoGen = useDiagramStore((s) => s.setTaskAutoGen)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div ref={ref} className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 w-80 py-2">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+        <Zap size={13} className="text-amber-500" />
+        <span className="text-xs font-bold text-gray-800">Auto-Generate Rules</span>
+      </div>
+      <p className="px-4 py-1.5 text-[10px] text-gray-400 leading-relaxed">
+        When enabled, tasks and subtasks are created automatically as you add IO, sequences, and devices.
+      </p>
+      <div className="flex flex-col">
+        {AUTO_GEN_RULES.map((rule) => (
+          <label
+            key={rule.key}
+            className="flex items-start gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors"
+          >
+            <input
+              type="checkbox"
+              checked={autoGen[rule.key]}
+              onChange={(e) => setAutoGen({ [rule.key]: e.target.checked })}
+              className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 flex-shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-semibold text-gray-700 block">{rule.label}</span>
+              <span className="text-[10px] text-gray-400 leading-snug block mt-0.5">{rule.desc}</span>
+            </div>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main panel ───────────────────────────────────────────────────────────────
 
 export function TasksPanel() {
@@ -509,7 +564,10 @@ export function TasksPanel() {
   const [newName, setNewName] = useState('')
   const addRef = useRef<HTMLInputElement>(null)
   const [notesPct, setNotesPct] = useState(35)
+  const [showAutoGen, setShowAutoGen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const autoGen = useDiagramStore((s) => s.taskAutoGen)
+  const anyAutoGenOn = autoGen.ioCardFAT || autoGen.analogSAT || autoGen.sequenceTesting || autoGen.deviceTesting
 
   useEffect(() => {
     if (adding) addRef.current?.focus()
@@ -555,12 +613,29 @@ export function TasksPanel() {
           <h1 className="text-base font-bold text-gray-800">Tasks</h1>
           <Stats tasks={tasks} />
         </div>
-        <button
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
-        >
-          <Plus size={13} /> New Task
-        </button>
+        <div className="relative flex items-center gap-2">
+          <button
+            onClick={() => setShowAutoGen((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              showAutoGen
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : anyAutoGenOn
+                  ? 'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100'
+                  : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+            }`}
+            title="Auto-generation rules"
+          >
+            <Zap size={12} />
+            Auto
+          </button>
+          {showAutoGen && <AutoGenSettingsPopover onClose={() => setShowAutoGen(false)} />}
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
+          >
+            <Plus size={13} /> New Task
+          </button>
+        </div>
       </div>
 
       {/* Task list */}

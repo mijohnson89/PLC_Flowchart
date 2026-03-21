@@ -235,6 +235,14 @@ export interface Task {
   flowchartTabId: string | null
   sequenceTabId: string | null
   subTasks: SubTask[]
+  autoGenKey?: string
+}
+
+export interface TaskAutoGenSettings {
+  ioCardFAT: boolean
+  analogSAT: boolean
+  sequenceTesting: boolean
+  deviceTesting: boolean
 }
 
 // ── IO Table ──────────────────────────────────────────────────────────────────
@@ -331,6 +339,7 @@ export interface DiagramProject {
   ioEntries?: IOEntry[]
   tasks?: Task[]
   taskNotes?: string
+  taskAutoGen?: TaskAutoGenSettings
 }
 
 // ── Electron API ─────────────────────────────────────────────────────────────

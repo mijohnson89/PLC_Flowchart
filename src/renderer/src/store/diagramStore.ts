@@ -9,7 +9,7 @@ import type {
   MatrixData, MatrixCellValue,
   Plant, Area, Location,
   TreeFolder,
-  Task, SubTask,
+  Task, SubTask, TaskAutoGenSettings,
   IORack, IOSlot, IOEntry
 } from '../types'
 import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
@@ -72,6 +72,38 @@ function removeById<T extends { id: string }>(items: T[], id: string): T[] {
 function clearLocationRefs(instances: InterfaceInstance[], locationIds: string[]): InterfaceInstance[] {
   const ids = new Set(locationIds)
   return instances.map((i) => ids.has(i.locationId ?? '') ? { ...i, locationId: undefined } : i)
+}
+
+function findOrCreateAutoGenTask(
+  tasks: Task[],
+  autoGenKey: string,
+  defaultName: string
+): { tasks: Task[]; task: Task } {
+  const existing = tasks.find((t) => t.autoGenKey === autoGenKey)
+  if (existing) return { tasks, task: existing }
+  const task: Task = {
+    id: uid('task'),
+    name: defaultName,
+    flowchartTabId: null,
+    sequenceTabId: null,
+    subTasks: [],
+    autoGenKey
+  }
+  return { tasks: [...tasks, task], task }
+}
+
+function addAutoGenSubTask(
+  tasks: Task[],
+  taskId: string,
+  subName: string,
+  dedupeKey?: string
+): Task[] {
+  return tasks.map((t) => {
+    if (t.id !== taskId) return t
+    if (dedupeKey && t.subTasks.some((st) => st.name === dedupeKey)) return t
+    const sub: SubTask = { id: uid('sub'), name: subName, designed: false, programmed: false, tested: false }
+    return { ...t, subTasks: [...t.subTasks, sub] }
+  })
 }
 
 /** Migrate legacy group/subGroup tab properties into explicit TreeFolder entries */
@@ -258,6 +290,8 @@ interface DiagramStore {
   removeSubTask: (taskId: string, subTaskId: string) => void
   taskNotes: string
   setTaskNotes: (html: string) => void
+  taskAutoGen: TaskAutoGenSettings
+  setTaskAutoGen: (patch: Partial<TaskAutoGenSettings>) => void
 
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => void
@@ -295,13 +329,23 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ...(opts?.group ? { group: opts.group } : {}),
       ...(opts?.subGroup ? { subGroup: opts.subGroup } : {})
     }
-    set((s) => ({
-      tabs: [...s.tabs, tab],
-      ...(activate
-        ? { activeTabId: tab.id, selectedNodeId: null, selectedEdgeId: null, openTabIds: [...s.openTabIds, tab.id] }
-        : {}),
-      isDirty: true
-    }))
+    set((s) => {
+      const result: Record<string, unknown> = {
+        tabs: [...s.tabs, tab],
+        isDirty: true
+      }
+      if (activate) {
+        result.activeTabId = tab.id
+        result.selectedNodeId = null
+        result.selectedEdgeId = null
+        result.openTabIds = [...s.openTabIds, tab.id]
+      }
+      if (s.taskAutoGen.sequenceTesting && type === 'flowchart') {
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sequences', 'Sequences')
+        result.tasks = addAutoGenSubTask(t1, task.id, name, name)
+      }
+      return result
+    })
     get().pushHistory()
     return tab.id
   },
@@ -817,7 +861,21 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     isDirty: true
   })),
 
-  addInterfaceInstance: (instance) => set((s) => ({ interfaceInstances: [...s.interfaceInstances, instance], isDirty: true })),
+  addInterfaceInstance: (instance) => set((s) => {
+    const result: Record<string, unknown> = {
+      interfaceInstances: [...s.interfaceInstances, instance],
+      isDirty: true
+    }
+    if (s.taskAutoGen.deviceTesting) {
+      const iface = s.userInterfaces.find((ui) => ui.id === instance.interfaceId)
+      if (iface && iface.type === 'AOI') {
+        const label = instance.name || instance.tagName
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:devices', 'Devices')
+        result.tasks = addAutoGenSubTask(t1, task.id, label, label)
+      }
+    }
+    return result
+  }),
   updateInterfaceInstance: (id, patch) => set((s) => ({ interfaceInstances: updateById(s.interfaceInstances, id, patch), isDirty: true })),
   removeInterfaceInstance: (id) => set((s) => ({ interfaceInstances: removeById(s.interfaceInstances, id), isDirty: true })),
 
@@ -914,7 +972,19 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   addIOSlot: (rackId, name, catalogNumber) => {
     const id = uid('slot')
     const slot: IOSlot = { id, rackId, name, catalogNumber }
-    set((s) => ({ ioSlots: [...s.ioSlots, slot], isDirty: true }))
+    set((s) => {
+      const next: Partial<ReturnType<typeof get>> & { ioSlots: IOSlot[]; isDirty: boolean } = {
+        ioSlots: [...s.ioSlots, slot],
+        isDirty: true
+      }
+      if (s.taskAutoGen.ioCardFAT) {
+        const rack = s.ioRacks.find((r) => r.id === rackId)
+        const label = rack ? `${rack.name} / ${name}` : name
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:fat', 'Factory Acceptance Test')
+        next.tasks = addAutoGenSubTask(t1, task.id, `IO Check — ${label}`)
+      }
+      return next
+    })
     get().pushHistory()
     return id
   },
@@ -938,15 +1008,43 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   ioEntries: [],
 
   addIOEntry: (entry) => {
-    set((s) => ({ ioEntries: [...s.ioEntries, entry], isDirty: true }))
+    set((s) => {
+      const next: Partial<ReturnType<typeof get>> & { ioEntries: IOEntry[]; isDirty: boolean } = {
+        ioEntries: [...s.ioEntries, entry],
+        isDirty: true
+      }
+      const analogTypes = new Set(['AI', 'AO', 'RTD', 'TC'])
+      if (s.taskAutoGen.analogSAT && analogTypes.has(entry.ioType)) {
+        const tag = entry.drawingTag || entry.description1 || `${entry.ioType} Ch ${entry.channel}`
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sat', 'Site Acceptance Test')
+        next.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`)
+      }
+      return next
+    })
     get().pushHistory()
   },
 
   updateIOEntry: (id, patch) => {
-    set((s) => ({
-      ioEntries: s.ioEntries.map((e) => (e.id === id ? { ...e, ...patch } : e)),
-      isDirty: true
-    }))
+    set((s) => {
+      const oldEntry = s.ioEntries.find((e) => e.id === id)
+      const newEntries = s.ioEntries.map((e) => (e.id === id ? { ...e, ...patch } : e))
+      const result: Record<string, unknown> = { ioEntries: newEntries, isDirty: true }
+
+      const analogTypes = new Set(['AI', 'AO', 'RTD', 'TC'])
+      if (
+        s.taskAutoGen.analogSAT &&
+        patch.ioType &&
+        analogTypes.has(patch.ioType) &&
+        oldEntry &&
+        !analogTypes.has(oldEntry.ioType)
+      ) {
+        const updated = { ...oldEntry, ...patch }
+        const tag = updated.drawingTag || updated.description1 || `${updated.ioType} Ch ${updated.channel}`
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sat', 'Site Acceptance Test')
+        result.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`)
+      }
+      return result
+    })
   },
 
   removeIOEntry: (id) => {
@@ -1038,6 +1136,9 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   taskNotes: '',
   setTaskNotes: (html) => set({ taskNotes: html, isDirty: true }),
 
+  taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true },
+  setTaskAutoGen: (patch) => set((s) => ({ taskAutoGen: { ...s.taskAutoGen, ...patch }, isDirty: true })),
+
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => {
     const tabs = defaultTabs()
@@ -1066,7 +1167,8 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioSlots: [],
       ioEntries: [],
       tasks: [],
-      taskNotes: ''
+      taskNotes: '',
+      taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true }
     })
   },
 
@@ -1123,12 +1225,13 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioSlots: project.ioSlots ?? [],
       ioEntries: project.ioEntries ?? [],
       tasks: project.tasks ?? [],
-      taskNotes: project.taskNotes ?? ''
+      taskNotes: project.taskNotes ?? '',
+      taskAutoGen: project.taskAutoGen ?? { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true }
     })
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes } = get()
+    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
@@ -1149,7 +1252,8 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioSlots,
       ioEntries,
       tasks,
-      taskNotes
+      taskNotes,
+      taskAutoGen
     }
   }
 }))
