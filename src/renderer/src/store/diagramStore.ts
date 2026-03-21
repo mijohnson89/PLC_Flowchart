@@ -86,22 +86,38 @@ function findOrCreateAutoGenTask(
     name: defaultName,
     flowchartTabId: null,
     sequenceTabId: null,
+    ioRackId: null,
+    ioSlotId: null,
+    ioEntryId: null,
+    instanceId: null,
     subTasks: [],
     autoGenKey
   }
   return { tasks: [...tasks, task], task }
 }
 
+interface SubTaskLinks {
+  linkedTabId?: string
+  linkedSlotId?: string
+  linkedEntryId?: string
+  linkedInstanceId?: string
+}
+
 function addAutoGenSubTask(
   tasks: Task[],
   taskId: string,
   subName: string,
-  dedupeKey?: string
+  dedupeKey?: string,
+  links?: SubTaskLinks
 ): Task[] {
   return tasks.map((t) => {
     if (t.id !== taskId) return t
     if (dedupeKey && t.subTasks.some((st) => st.name === dedupeKey)) return t
-    const sub: SubTask = { id: uid('sub'), name: subName, designed: false, programmed: false, tested: false }
+    const sub: SubTask = {
+      id: uid('sub'), name: subName,
+      designed: false, programmed: false, tested: false,
+      ...links
+    }
     return { ...t, subTasks: [...t.subTasks, sub] }
   })
 }
@@ -282,11 +298,11 @@ interface DiagramStore {
   // ── Tasks ──────────────────────────────────────────────────────────────────
   tasks: Task[]
   addTask: (name: string) => string
-  updateTask: (id: string, patch: Partial<Pick<Task, 'name' | 'flowchartTabId' | 'sequenceTabId'>>) => void
+  updateTask: (id: string, patch: Partial<Pick<Task, 'name' | 'flowchartTabId' | 'sequenceTabId' | 'ioRackId' | 'ioSlotId' | 'ioEntryId' | 'instanceId'>>) => void
   removeTask: (id: string) => void
   reorderTask: (id: string, newIndex: number) => void
   addSubTask: (taskId: string, name: string) => void
-  updateSubTask: (taskId: string, subTaskId: string, patch: Partial<Pick<SubTask, 'name' | 'designed' | 'programmed' | 'tested'>>) => void
+  updateSubTask: (taskId: string, subTaskId: string, patch: Partial<Pick<SubTask, 'name' | 'designed' | 'programmed' | 'tested' | 'linkedTabId' | 'linkedSlotId' | 'linkedEntryId' | 'linkedInstanceId'>>) => void
   removeSubTask: (taskId: string, subTaskId: string) => void
   taskNotes: string
   setTaskNotes: (html: string) => void
@@ -342,7 +358,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       }
       if (s.taskAutoGen.sequenceTesting && type === 'flowchart') {
         const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sequences', 'Sequences')
-        result.tasks = addAutoGenSubTask(t1, task.id, name, name)
+        result.tasks = addAutoGenSubTask(t1, task.id, name, name, { linkedTabId: tab.id })
       }
       return result
     })
@@ -871,7 +887,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       if (iface && iface.type === 'AOI') {
         const label = instance.name || instance.tagName
         const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:devices', 'Devices')
-        result.tasks = addAutoGenSubTask(t1, task.id, label, label)
+        result.tasks = addAutoGenSubTask(t1, task.id, label, label, { linkedInstanceId: instance.id })
       }
     }
     return result
@@ -981,7 +997,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         const rack = s.ioRacks.find((r) => r.id === rackId)
         const label = rack ? `${rack.name} / ${name}` : name
         const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:fat', 'Factory Acceptance Test')
-        next.tasks = addAutoGenSubTask(t1, task.id, `IO Check — ${label}`)
+        next.tasks = addAutoGenSubTask(t1, task.id, `IO Check — ${label}`, undefined, { linkedSlotId: id })
       }
       return next
     })
@@ -1017,7 +1033,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       if (s.taskAutoGen.analogSAT && analogTypes.has(entry.ioType)) {
         const tag = entry.drawingTag || entry.description1 || `${entry.ioType} Ch ${entry.channel}`
         const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sat', 'Site Acceptance Test')
-        next.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`)
+        next.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`, undefined, { linkedEntryId: entry.id })
       }
       return next
     })
@@ -1041,7 +1057,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         const updated = { ...oldEntry, ...patch }
         const tag = updated.drawingTag || updated.description1 || `${updated.ioType} Ch ${updated.channel}`
         const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:sat', 'Site Acceptance Test')
-        result.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`)
+        result.tasks = addAutoGenSubTask(t1, task.id, `Scale & Prove — ${tag}`, undefined, { linkedEntryId: id })
       }
       return result
     })
@@ -1069,7 +1085,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
 
   addTask: (name) => {
     const id = uid('task')
-    const task: Task = { id, name, flowchartTabId: null, sequenceTabId: null, subTasks: [] }
+    const task: Task = { id, name, flowchartTabId: null, sequenceTabId: null, ioRackId: null, ioSlotId: null, ioEntryId: null, instanceId: null, subTasks: [] }
     set((s) => ({ tasks: [...s.tasks, task], isDirty: true }))
     get().pushHistory()
     return id

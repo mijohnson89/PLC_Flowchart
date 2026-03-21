@@ -227,6 +227,10 @@ export interface SubTask {
   designed: boolean
   programmed: boolean
   tested: boolean
+  linkedTabId?: string
+  linkedSlotId?: string
+  linkedEntryId?: string
+  linkedInstanceId?: string
 }
 
 export interface Task {
@@ -234,6 +238,10 @@ export interface Task {
   name: string
   flowchartTabId: string | null
   sequenceTabId: string | null
+  ioRackId: string | null
+  ioSlotId: string | null
+  ioEntryId: string | null
+  instanceId: string | null
   subTasks: SubTask[]
   autoGenKey?: string
 }

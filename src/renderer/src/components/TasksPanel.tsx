@@ -5,10 +5,11 @@ import {
   ClipboardList, CheckSquare, Square,
   Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
   Heading1, Heading2, Strikethrough, StickyNote, Minus,
-  Settings2, Zap
+  Zap, Server, Cpu, Tag, ExternalLink
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { Task, SubTask, TaskAutoGenSettings } from '../types'
+import { IO_TABLE_TAB_ID, INTERFACES_TAB_ID } from '../types'
 
 // ── Progress bar ─────────────────────────────────────────────────────────────
 
@@ -148,7 +149,280 @@ function TabLinkSelector({ type, currentId, onSelect }: {
   )
 }
 
+// ── IO link selector ─────────────────────────────────────────────────────────
+
+function IOLinkSelector({ rackId, slotId, entryId, onSelect }: {
+  rackId: string | null
+  slotId: string | null
+  entryId: string | null
+  onSelect: (patch: { ioRackId: string | null; ioSlotId: string | null; ioEntryId: string | null }) => void
+}) {
+  const racks = useDiagramStore((s) => s.ioRacks)
+  const slots = useDiagramStore((s) => s.ioSlots)
+  const entries = useDiagramStore((s) => s.ioEntries)
+  const setActiveTab = useDiagramStore((s) => s.setActiveTab)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const linkedRack = racks.find((r) => r.id === rackId)
+  const linkedSlot = slots.find((s) => s.id === slotId)
+  const linkedEntry = entries.find((e) => e.id === entryId)
+  const hasLink = linkedRack || linkedSlot || linkedEntry
+  const displayLabel = linkedEntry
+    ? (linkedEntry.drawingTag || `Ch ${linkedEntry.channel}`)
+    : linkedSlot
+      ? linkedSlot.name
+      : linkedRack
+        ? linkedRack.name
+        : 'IO'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors ${
+          hasLink
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:text-gray-600'
+        }`}
+        title={hasLink ? `Linked: ${displayLabel}` : 'Link to IO'}
+      >
+        <Server size={11} />
+        <span className="truncate max-w-[100px]">{displayLabel}</span>
+        {hasLink ? <Link2 size={9} /> : <Unlink size={9} className="opacity-50" />}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 min-w-[220px] py-1 max-h-64 overflow-y-auto">
+          {hasLink && (
+            <>
+              <button
+                onClick={() => { setActiveTab(IO_TABLE_TAB_ID); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-emerald-600 hover:bg-emerald-50"
+              >
+                <ExternalLink size={10} /> Go to IO Table
+              </button>
+              <button
+                onClick={() => { onSelect({ ioRackId: null, ioSlotId: null, ioEntryId: null }); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-red-500 hover:bg-red-50"
+              >
+                <Unlink size={10} /> Unlink
+              </button>
+              <div className="h-px bg-gray-100 my-1" />
+            </>
+          )}
+          {racks.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-gray-400 italic">No IO racks defined</div>
+          )}
+          {racks.map((rack) => {
+            const rackSlots = slots.filter((s) => s.rackId === rack.id)
+            return (
+              <div key={rack.id}>
+                <button
+                  onClick={() => { onSelect({ ioRackId: rack.id, ioSlotId: null, ioEntryId: null }); setOpen(false) }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-50 font-semibold ${
+                    rack.id === rackId && !slotId ? 'text-emerald-600' : 'text-gray-700'
+                  }`}
+                >
+                  <Server size={10} /> {rack.name}
+                </button>
+                {rackSlots.map((slot) => {
+                  const slotEntries = entries.filter((e) => e.slotId === slot.id)
+                  return (
+                    <div key={slot.id}>
+                      <button
+                        onClick={() => { onSelect({ ioRackId: rack.id, ioSlotId: slot.id, ioEntryId: null }); setOpen(false) }}
+                        className={`w-full flex items-center gap-2 px-5 py-1 text-[11px] hover:bg-gray-50 ${
+                          slot.id === slotId && !entryId ? 'text-emerald-600 font-semibold' : 'text-gray-600'
+                        }`}
+                      >
+                        <Cpu size={9} /> {slot.name}
+                        {slot.catalogNumber && <span className="text-[9px] text-gray-400">{slot.catalogNumber}</span>}
+                      </button>
+                      {slotEntries.map((entry) => (
+                        <button
+                          key={entry.id}
+                          onClick={() => { onSelect({ ioRackId: rack.id, ioSlotId: slot.id, ioEntryId: entry.id }); setOpen(false) }}
+                          className={`w-full flex items-center gap-2 px-8 py-1 text-[10px] hover:bg-gray-50 ${
+                            entry.id === entryId ? 'text-emerald-600 font-semibold' : 'text-gray-500'
+                          }`}
+                        >
+                          {entry.drawingTag || `Ch ${entry.channel}`}
+                          {entry.ioType && <span className="text-[9px] text-gray-400">{entry.ioType}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Instance link selector ───────────────────────────────────────────────────
+
+function InstanceLinkSelector({ currentId, onSelect }: {
+  currentId: string | null
+  onSelect: (id: string | null) => void
+}) {
+  const instances = useDiagramStore((s) => s.interfaceInstances)
+  const ifaces = useDiagramStore((s) => s.userInterfaces)
+  const setActiveTab = useDiagramStore((s) => s.setActiveTab)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const linked = instances.find((i) => i.id === currentId)
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors ${
+          linked
+            ? 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'
+            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:text-gray-600'
+        }`}
+        title={linked ? `Linked: ${linked.name}` : 'Link to Instance'}
+      >
+        <Tag size={11} />
+        <span className="truncate max-w-[100px]">{linked ? linked.name : 'Instance'}</span>
+        {linked ? <Link2 size={9} /> : <Unlink size={9} className="opacity-50" />}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 min-w-[200px] py-1 max-h-64 overflow-y-auto">
+          {linked && (
+            <>
+              <button
+                onClick={() => { setActiveTab(INTERFACES_TAB_ID); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-orange-600 hover:bg-orange-50"
+              >
+                <ExternalLink size={10} /> Go to Interfaces
+              </button>
+              <button
+                onClick={() => { onSelect(null); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-red-500 hover:bg-red-50"
+              >
+                <Unlink size={10} /> Unlink
+              </button>
+              <div className="h-px bg-gray-100 my-1" />
+            </>
+          )}
+          {instances.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-gray-400 italic">No instances defined</div>
+          )}
+          {instances.map((inst) => {
+            const ui = ifaces.find((u) => u.id === inst.interfaceId)
+            return (
+              <button
+                key={inst.id}
+                onClick={() => { onSelect(inst.id); setOpen(false) }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-50 ${
+                  inst.id === currentId ? 'text-orange-600 font-semibold' : 'text-gray-700'
+                }`}
+              >
+                <Tag size={10} />
+                <span className="truncate">{inst.name}</span>
+                {ui && <span className="text-[9px] text-gray-400 ml-auto flex-shrink-0">{ui.name}</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Subtask row ──────────────────────────────────────────────────────────────
+
+function SubTaskLinkBadge({ sub }: { sub: SubTask }) {
+  const tabs = useDiagramStore((s) => s.tabs)
+  const slots = useDiagramStore((s) => s.ioSlots)
+  const entries = useDiagramStore((s) => s.ioEntries)
+  const instances = useDiagramStore((s) => s.interfaceInstances)
+  const setActiveTab = useDiagramStore((s) => s.setActiveTab)
+
+  if (sub.linkedTabId) {
+    const tab = tabs.find((t) => t.id === sub.linkedTabId)
+    if (!tab) return null
+    return (
+      <button
+        onClick={() => setActiveTab(tab.id)}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+        title={`Go to ${tab.name}`}
+      >
+        <Network size={9} />
+        {tab.name}
+      </button>
+    )
+  }
+
+  if (sub.linkedSlotId) {
+    const slot = slots.find((s) => s.id === sub.linkedSlotId)
+    return (
+      <button
+        onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors"
+        title={`Go to IO Table — ${slot?.name ?? 'Slot'}`}
+      >
+        <Cpu size={9} />
+        {slot?.name ?? 'Slot'}
+      </button>
+    )
+  }
+
+  if (sub.linkedEntryId) {
+    const entry = entries.find((e) => e.id === sub.linkedEntryId)
+    return (
+      <button
+        onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors"
+        title={`Go to IO Table — ${entry?.drawingTag || 'Channel'}`}
+      >
+        <Server size={9} />
+        {entry?.drawingTag || entry?.ioType || 'Ch'}
+      </button>
+    )
+  }
+
+  if (sub.linkedInstanceId) {
+    const inst = instances.find((i) => i.id === sub.linkedInstanceId)
+    return (
+      <button
+        onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors"
+        title={`Go to Interfaces — ${inst?.name ?? 'Instance'}`}
+      >
+        <Tag size={9} />
+        {inst?.name ?? 'Instance'}
+      </button>
+    )
+  }
+
+  return null
+}
 
 function SubTaskRow({ sub, taskId }: { sub: SubTask; taskId: string }) {
   const { updateSubTask, removeSubTask } = useDiagramStore()
@@ -176,7 +450,7 @@ function SubTaskRow({ sub, taskId }: { sub: SubTask; taskId: string }) {
     <div className={`group flex items-center gap-2 px-3 py-1.5 ml-6 border-l-2 transition-colors ${
       allDone ? 'border-emerald-300 bg-emerald-50/30' : 'border-gray-200 hover:bg-gray-50'
     }`}>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex items-center gap-2">
         {editing ? (
           <InlineEdit
             value={sub.name}
@@ -192,6 +466,7 @@ function SubTaskRow({ sub, taskId }: { sub: SubTask; taskId: string }) {
             {sub.name}
           </span>
         )}
+        <SubTaskLinkBadge sub={sub} />
       </div>
 
       <div className="flex items-center gap-1 flex-shrink-0">
@@ -277,7 +552,7 @@ function TaskCard({ task }: { task: Task }) {
       {expanded && (
         <div className="border-t border-gray-100">
           {/* Linked diagrams */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/30">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/30 flex-wrap">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mr-1">Linked</span>
             <TabLinkSelector
               type="flowchart"
@@ -288,6 +563,16 @@ function TaskCard({ task }: { task: Task }) {
               type="sequence"
               currentId={task.sequenceTabId}
               onSelect={(id) => updateTask(task.id, { sequenceTabId: id })}
+            />
+            <IOLinkSelector
+              rackId={task.ioRackId}
+              slotId={task.ioSlotId}
+              entryId={task.ioEntryId}
+              onSelect={(patch) => updateTask(task.id, patch)}
+            />
+            <InstanceLinkSelector
+              currentId={task.instanceId}
+              onSelect={(id) => updateTask(task.id, { instanceId: id })}
             />
           </div>
 
