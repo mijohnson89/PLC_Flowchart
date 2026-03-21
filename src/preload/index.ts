@@ -16,8 +16,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('dialog:export-interfaces', { items, defaultName }),
 
   // Export to Excel
-  exportExcel: (buffer: ArrayBuffer, defaultName?: string) =>
-    ipcRenderer.invoke('dialog:export-excel', { buffer: Array.from(new Uint8Array(buffer)), defaultName }),
+  exportExcel: (base64: string, defaultName?: string) =>
+    ipcRenderer.invoke('dialog:export-excel', { base64, defaultName }),
 
   // Menu events (main -> renderer)
   onMenu: (channel: string, cb: () => void) => {

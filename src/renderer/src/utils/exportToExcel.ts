@@ -1,9 +1,8 @@
 import * as XLSX from 'xlsx'
 import { useDiagramStore } from '../store/diagramStore'
 import type {
-  DiagramTab, UserInterface, InterfaceInstance,
-  IORack, IOSlot, IOEntry, Task, Alarm,
-  Plant, Area, Location
+  DiagramTab, UserInterface, InterfaceInstance, InterfaceField,
+  IORack, IOSlot, IOEntry, InterfaceType, MatrixData
 } from '../types'
 
 type Row = Record<string, string | number | boolean | undefined>
@@ -31,90 +30,17 @@ function autoWidth(sheet: XLSX.WorkSheet): void {
   sheet['!cols'] = cols
 }
 
-function buildLocationMap(plants: Plant[], areas: Area[], locations: Location[]) {
-  const plantMap = new Map(plants.map((p) => [p.id, p.name]))
-  const areaMap = new Map(areas.map((a) => [a.id, a]))
-  const locMap = new Map(locations.map((l) => [l.id, l]))
-
-  return (locationId?: string) => {
-    if (!locationId) return { plant: '', area: '', location: '' }
-    const loc = locMap.get(locationId)
-    if (!loc) return { plant: '', area: '', location: '' }
-    const area = areaMap.get(loc.areaId)
-    const plant = area ? plantMap.get(area.plantId) : undefined
-    return {
-      plant: plant ?? '',
-      area: area?.name ?? '',
-      location: loc.name
-    }
-  }
+function isNumericType(dt: string): boolean {
+  return /^(SINT|INT|DINT|LINT|USINT|UINT|UDINT|ULINT|REAL|LREAL|BYTE|WORD|DWORD)/.test(dt)
 }
 
-function buildInterfacesSheet(userInterfaces: UserInterface[]): XLSX.WorkSheet {
-  const rows: Row[] = []
-  for (const iface of userInterfaces) {
-    if (iface.fields.length === 0) {
-      rows.push({
-        'Interface': iface.name,
-        'Type': iface.type,
-        'Description': iface.description ?? '',
-        'Field Name': '',
-        'Data Type': '',
-        'Usage': '',
-        'Field Description': '',
-        'Include In Matrix': '',
-        'Is Alarm': '',
-        'Alarm Message': '',
-        'Is IO': ''
-      })
-    }
-    for (const f of iface.fields) {
-      rows.push({
-        'Interface': iface.name,
-        'Type': iface.type,
-        'Description': iface.description ?? '',
-        'Field Name': f.name,
-        'Data Type': f.dataType,
-        'Usage': f.usage ?? '',
-        'Field Description': f.description ?? '',
-        'Include In Matrix': f.includeInMatrix ? 'Yes' : '',
-        'Is Alarm': f.isAlarm ? 'Yes' : '',
-        'Alarm Message': f.alarmMessage ?? '',
-        'Is IO': f.isIO ? 'Yes' : ''
-      })
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Interface': '(No interfaces defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
+function isControllableField(field: InterfaceField, ifaceType: InterfaceType): boolean {
+  if (field.includeInMatrix !== undefined) return field.includeInMatrix
+  if (ifaceType === 'UDT') return true
+  return field.usage === 'Input' || field.usage === 'InOut'
 }
 
-function buildInstancesSheet(
-  interfaceInstances: InterfaceInstance[],
-  userInterfaces: UserInterface[],
-  resolve: ReturnType<typeof buildLocationMap>
-): XLSX.WorkSheet {
-  const ifaceMap = new Map(userInterfaces.map((i) => [i.id, i]))
-  const rows: Row[] = interfaceInstances.map((inst) => {
-    const iface = ifaceMap.get(inst.interfaceId)
-    const loc = resolve(inst.locationId)
-    return {
-      'Instance Name': inst.name,
-      'Tag Name': inst.tagName,
-      'Interface': iface?.name ?? '',
-      'Interface Type': iface?.type ?? '',
-      'Description': inst.description ?? '',
-      'Plant': loc.plant,
-      'Area': loc.area,
-      'Location': loc.location
-    }
-  })
-  if (rows.length === 0) rows.push({ 'Instance Name': '(No instances defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
+// ── IO Table sheet ───────────────────────────────────────────────────────────
 
 function buildIOTableSheet(
   ioRacks: IORack[],
@@ -169,325 +95,132 @@ function buildIOTableSheet(
   return sheet
 }
 
-function buildLocationsSheet(plants: Plant[], areas: Area[], locations: Location[]): XLSX.WorkSheet {
-  const plantMap = new Map(plants.map((p) => [p.id, p.name]))
-  const areaMap = new Map(areas.map((a) => [a.id, a]))
+// ── Per-tab C&E Matrix sheet ─────────────────────────────────────────────────
 
-  const rows: Row[] = []
-  for (const loc of locations) {
-    const area = areaMap.get(loc.areaId)
-    rows.push({
-      'Plant': area ? (plantMap.get(area.plantId) ?? '') : '',
-      'Area': area?.name ?? '',
-      'Location': loc.name
-    })
-  }
-  if (rows.length === 0) {
-    for (const area of areas) {
-      rows.push({
-        'Plant': plantMap.get(area.plantId) ?? '',
-        'Area': area.name,
-        'Location': ''
-      })
-    }
-  }
-  if (rows.length === 0) {
-    for (const plant of plants) {
-      rows.push({ 'Plant': plant.name, 'Area': '', 'Location': '' })
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Plant': '(No locations defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
+interface MatrixCol {
+  instanceId: string
+  instanceName: string
+  fieldId: string
+  fieldName: string
+  dataType: string
+  isNumeric: boolean
 }
 
-function buildTasksSheet(
-  tasks: Task[],
-  tabs: DiagramTab[],
-  ioRacks: IORack[],
-  ioSlots: IOSlot[],
-  ioEntries: IOEntry[],
-  interfaceInstances: InterfaceInstance[]
-): XLSX.WorkSheet {
-  const tabMap = new Map(tabs.map((t) => [t.id, t.name]))
-  const rackMap = new Map(ioRacks.map((r) => [r.id, r.name]))
-  const slotMap = new Map(ioSlots.map((s) => [s.id, s]))
-  const instMap = new Map(interfaceInstances.map((i) => [i.id, i.name]))
-  const entryMap = new Map(ioEntries.map((e) => [e.id, e]))
-
-  const rows: Row[] = []
-  for (const task of tasks) {
-    const flowTab = task.flowchartTabId ? tabMap.get(task.flowchartTabId) : ''
-    const seqTab = task.sequenceTabId ? tabMap.get(task.sequenceTabId) : ''
-    const rackName = task.ioRackId ? rackMap.get(task.ioRackId) : ''
-    const slot = task.ioSlotId ? slotMap.get(task.ioSlotId) : undefined
-    const entry = task.ioEntryId ? entryMap.get(task.ioEntryId) : undefined
-    const instName = task.instanceId ? instMap.get(task.instanceId) : ''
-
-    if (task.subTasks.length === 0) {
-      rows.push({
-        'Task': task.name,
-        'Flowchart Tab': flowTab ?? '',
-        'Sequence Tab': seqTab ?? '',
-        'Rack': rackName ?? '',
-        'Slot': slot?.name ?? '',
-        'IO Channel': entry?.channel ?? '',
-        'Instance': instName ?? '',
-        'Sub-Task': '',
-        'Designed': '',
-        'Programmed': '',
-        'Tested': ''
-      })
-    }
-    for (const st of task.subTasks) {
-      rows.push({
-        'Task': task.name,
-        'Flowchart Tab': flowTab ?? '',
-        'Sequence Tab': seqTab ?? '',
-        'Rack': rackName ?? '',
-        'Slot': slot?.name ?? '',
-        'IO Channel': entry?.channel ?? '',
-        'Instance': instName ?? '',
-        'Sub-Task': st.name,
-        'Designed': st.designed ? 'Yes' : 'No',
-        'Programmed': st.programmed ? 'Yes' : 'No',
-        'Tested': st.tested ? 'Yes' : 'No'
-      })
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Task': '(No tasks defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildAlarmsSheet(
-  alarms: Alarm[],
-  userInterfaces: UserInterface[],
-  interfaceInstances: InterfaceInstance[]
-): XLSX.WorkSheet {
-  const rows: Row[] = []
-
-  for (const alarm of alarms) {
-    rows.push({ 'Source': 'Global', 'Instance': '', 'Field': '', 'Alarm Description': alarm.description })
-  }
-
-  for (const inst of interfaceInstances) {
-    const iface = userInterfaces.find((i) => i.id === inst.interfaceId)
-    if (!iface) continue
-    for (const field of iface.fields) {
-      if (!field.isAlarm) continue
-      rows.push({
-        'Source': 'Instance',
-        'Instance': inst.name,
-        'Field': field.name,
-        'Alarm Description': field.alarmMessage ? `${inst.name} - ${field.alarmMessage}` : ''
-      })
-    }
-  }
-
-  if (rows.length === 0) rows.push({ 'Source': '(No alarms defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildDiagramsSheet(tabs: DiagramTab[]): XLSX.WorkSheet {
-  const rows: Row[] = tabs.map((tab) => ({
-    'Tab Name': tab.name,
-    'Type': tab.type,
-    'Group': tab.group ?? '',
-    'Sub-Group': tab.subGroup ?? '',
-    'Flow Nodes': tab.flowNodes.length,
-    'Flow Edges': tab.flowEdges.length,
-    'Seq Actors': tab.seqActors.length,
-    'Seq Messages': tab.seqMessages.length,
-    'Revisions': tab.revisions.length,
-    'Conditions': tab.conditions.length
-  }))
-  if (rows.length === 0) rows.push({ 'Tab Name': '(No diagrams)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildFlowchartDetailsSheet(tabs: DiagramTab[]): XLSX.WorkSheet {
-  const rows: Row[] = []
-  for (const tab of tabs) {
-    if (tab.type !== 'flowchart') continue
-    for (const node of tab.flowNodes) {
-      rows.push({
-        'Diagram': tab.name,
-        'Node Type': node.type ?? '',
-        'Label': node.data.label ?? '',
-        'Step Number': node.data.stepNumber ?? '',
-        'PackML State': node.data.packMLState ?? '',
-        'Routine': node.data.routineName ?? '',
-        'Condition': node.data.condition ?? '',
-        'Description': node.data.description ?? '',
-        'Output Type': node.data.outputType ?? '',
-        'Tag Name': node.data.tagName ?? ''
-      })
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Diagram': '(No flowchart nodes)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildSequenceDetailsSheet(tabs: DiagramTab[]): XLSX.WorkSheet {
-  const rows: Row[] = []
-  for (const tab of tabs) {
-    if (tab.type !== 'sequence') continue
-    const actorMap = new Map(tab.seqActors.map((a) => [a.id, a.name]))
-    for (const msg of [...tab.seqMessages].sort((a, b) => a.order - b.order)) {
-      rows.push({
-        'Diagram': tab.name,
-        'Order': msg.order,
-        'From': actorMap.get(msg.fromId) ?? msg.fromId,
-        'To': actorMap.get(msg.toId) ?? msg.toId,
-        'Message': msg.label,
-        'Type': msg.type,
-        'Note': msg.note ?? ''
-      })
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Diagram': '(No sequence messages)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildConditionsSheet(tabs: DiagramTab[]): XLSX.WorkSheet {
-  const rows: Row[] = []
-  for (const tab of tabs) {
-    for (const cond of tab.conditions) {
-      if (cond.causes.length === 0) {
-        rows.push({
-          'Diagram': tab.name,
-          'Condition': cond.description,
-          'Action': cond.action,
-          'Cause': '',
-        })
-      }
-      for (const cause of cond.causes) {
-        rows.push({
-          'Diagram': tab.name,
-          'Condition': cond.description,
-          'Action': cond.action,
-          'Cause': cause.description,
-        })
-      }
-    }
-  }
-  if (rows.length === 0) rows.push({ 'Diagram': '(No conditions defined)' })
-  const sheet = ws(rows)
-  autoWidth(sheet)
-  return sheet
-}
-
-function buildMatrixSheet(
-  matrixData: Record<string, Record<string, Record<string, unknown>>>,
-  tabs: DiagramTab[],
+function buildTabMatrixSheet(
+  tab: DiagramTab,
+  matrixData: MatrixData,
+  shownInstanceIds: string[] | undefined,
   interfaceInstances: InterfaceInstance[],
   userInterfaces: UserInterface[]
 ): XLSX.WorkSheet {
   const ifaceMap = new Map(userInterfaces.map((i) => [i.id, i]))
-  const instMap = new Map(interfaceInstances.map((i) => [i.id, i]))
+  const shownSet = shownInstanceIds ? new Set(shownInstanceIds) : null
 
-  const allNodeMap = new Map<string, { tabName: string; label: string; stepNumber?: number }>()
-  for (const tab of tabs) {
-    for (const node of tab.flowNodes) {
-      allNodeMap.set(node.id, {
-        tabName: tab.name,
-        label: node.data.label ?? '',
-        stepNumber: node.data.stepNumber
-      })
-    }
-  }
+  // Rows: step nodes sorted by step number
+  const stepNodes = tab.flowNodes
+    .filter((n) => n.type === 'step')
+    .sort((a, b) => (a.data.stepNumber ?? 0) - (b.data.stepNumber ?? 0))
 
-  const fieldColumns: { key: string; header: string }[] = []
-  const seenKeys = new Set<string>()
-  for (const instId of Object.keys(matrixData)) {
-    for (const [fieldId] of Object.entries(
-      Object.values(matrixData[instId] ?? {}).reduce<Record<string, true>>((acc, fields) => {
-        for (const k of Object.keys(fields)) acc[k] = true
-        return acc
-      }, {})
-    )) {
-      // wrong nesting – matrix is stepId → instId → fieldId
-    }
-  }
-
-  // matrix shape: stepNodeId → instanceId → fieldId → value
-  const stepIds = new Set<string>()
-  const colKeys = new Map<string, string>() // "instId::fieldId" → header
-  for (const [stepId, byInst] of Object.entries(matrixData)) {
-    stepIds.add(stepId)
-    for (const [instId, byField] of Object.entries(byInst)) {
-      const inst = instMap.get(instId)
-      const iface = inst ? ifaceMap.get(inst.interfaceId) : undefined
-      for (const fieldId of Object.keys(byField)) {
-        const k = `${instId}::${fieldId}`
-        if (!colKeys.has(k)) {
-          const field = iface?.fields.find((f) => f.id === fieldId)
-          colKeys.set(k, `${inst?.name ?? instId}.${field?.name ?? fieldId}`)
-        }
+  // Columns: controllable fields from shown instances
+  const columns: MatrixCol[] = []
+  const sortedIfaces = [...userInterfaces].sort((a, b) => a.name.localeCompare(b.name))
+  for (const iface of sortedIfaces) {
+    const fields = iface.fields.filter((f) => isControllableField(f, iface.type))
+    if (fields.length === 0) continue
+    const instances = interfaceInstances
+      .filter((inst) => inst.interfaceId === iface.id)
+      .filter((inst) => !shownSet || shownSet.has(inst.id))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    for (const inst of instances) {
+      for (const field of fields) {
+        columns.push({
+          instanceId: inst.id,
+          instanceName: inst.name,
+          fieldId: field.id,
+          fieldName: field.name,
+          dataType: field.dataType,
+          isNumeric: isNumericType(field.dataType)
+        })
       }
     }
   }
 
-  const cols = Array.from(colKeys.entries())
-  const rows: Row[] = []
-  for (const stepId of stepIds) {
-    const node = allNodeMap.get(stepId)
+  const rows: Row[] = stepNodes.map((node) => {
     const row: Row = {
-      'Diagram': node?.tabName ?? '',
-      'Step': node?.label ?? stepId,
-      'Step #': node?.stepNumber ?? ''
+      'Step #': node.data.stepNumber ?? '',
+      'Step': node.data.label ?? '',
+      'PackML State': node.data.packMLState ?? ''
     }
-    for (const [key, header] of cols) {
-      const [instId, fieldId] = key.split('::')
-      const val = matrixData[stepId]?.[instId]?.[fieldId]
-      row[header] = val === true ? 'X' : val === false ? '' : (val as string | number | undefined) ?? ''
+    for (const col of columns) {
+      const header = `${col.instanceName}.${col.fieldName}`
+      const val = matrixData?.[node.id]?.[col.instanceId]?.[col.fieldId]
+      if (col.isNumeric) {
+        row[header] = val != null ? val as number : ''
+      } else {
+        row[header] = val === true ? 'X' : val === false ? '0' : ''
+      }
     }
-    rows.push(row)
+    return row
+  })
+
+  if (rows.length === 0 && columns.length === 0) {
+    rows.push({ 'Step #': '(No matrix data)' })
+  } else if (rows.length === 0) {
+    rows.push({ 'Step #': '(No steps defined)' })
   }
 
-  if (rows.length === 0) rows.push({ 'Diagram': '(No matrix data)' })
   const sheet = ws(rows)
   autoWidth(sheet)
   return sheet
 }
 
-export function exportToExcel(): Uint8Array {
+// ── Safe sheet name (Excel max 31 chars, no special chars) ───────────────────
+
+function safeSheetName(name: string, existing: Set<string>): string {
+  let safe = name.replace(/[\\/*?\[\]:]/g, '').substring(0, 31)
+  if (!safe) safe = 'Sheet'
+  let result = safe
+  let i = 2
+  while (existing.has(result)) {
+    const suffix = ` (${i++})`
+    result = safe.substring(0, 31 - suffix.length) + suffix
+  }
+  existing.add(result)
+  return result
+}
+
+// ── Main export ──────────────────────────────────────────────────────────────
+
+export function exportToExcel(): string {
   const state = useDiagramStore.getState()
   const {
-    tabs, plants, areas, locations,
-    userInterfaces, interfaceInstances,
+    tabs, userInterfaces, interfaceInstances,
     ioRacks, ioSlots, ioEntries,
-    tasks, alarms, matrixData
+    matrixData, matrixShownInstances
   } = state
 
-  const resolve = buildLocationMap(plants, areas, locations)
   const wb = XLSX.utils.book_new()
+  const usedNames = new Set<string>()
 
-  XLSX.utils.book_append_sheet(wb, buildDiagramsSheet(tabs), 'Diagrams')
-  XLSX.utils.book_append_sheet(wb, buildFlowchartDetailsSheet(tabs), 'Flowchart Nodes')
-  XLSX.utils.book_append_sheet(wb, buildSequenceDetailsSheet(tabs), 'Sequence Messages')
-  XLSX.utils.book_append_sheet(wb, buildConditionsSheet(tabs), 'Conditions')
-  XLSX.utils.book_append_sheet(wb, buildInterfacesSheet(userInterfaces), 'Interfaces')
-  XLSX.utils.book_append_sheet(wb, buildInstancesSheet(interfaceInstances, userInterfaces, resolve), 'Instances')
-  XLSX.utils.book_append_sheet(wb, buildIOTableSheet(ioRacks, ioSlots, ioEntries, interfaceInstances, userInterfaces), 'IO Table')
-  XLSX.utils.book_append_sheet(wb, buildLocationsSheet(plants, areas, locations), 'Locations')
-  XLSX.utils.book_append_sheet(wb, buildTasksSheet(tasks, tabs, ioRacks, ioSlots, ioEntries, interfaceInstances), 'Tasks')
-  XLSX.utils.book_append_sheet(wb, buildAlarmsSheet(alarms, userInterfaces, interfaceInstances), 'Alarms')
+  // IO Table tab
+  const ioName = safeSheetName('IO', usedNames)
+  XLSX.utils.book_append_sheet(
+    wb,
+    buildIOTableSheet(ioRacks, ioSlots, ioEntries, interfaceInstances, userInterfaces),
+    ioName
+  )
 
-  if (matrixData && Object.keys(matrixData).length > 0) {
-    XLSX.utils.book_append_sheet(wb, buildMatrixSheet(matrixData, tabs, interfaceInstances, userInterfaces), 'C&E Matrix')
+  // One tab per flowchart with its C&E matrix
+  const flowchartTabs = tabs.filter((t) => t.type === 'flowchart')
+  for (const tab of flowchartTabs) {
+    const sheetName = safeSheetName(tab.name, usedNames)
+    const shownIds = matrixShownInstances[tab.id]
+    XLSX.utils.book_append_sheet(
+      wb,
+      buildTabMatrixSheet(tab, matrixData, shownIds, interfaceInstances, userInterfaces),
+      sheetName
+    )
   }
 
-  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as Uint8Array
+  return XLSX.write(wb, { type: 'base64', bookType: 'xlsx' }) as string
 }

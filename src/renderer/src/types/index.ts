@@ -390,7 +390,7 @@ export interface ElectronAPI {
   saveFile: (content: unknown, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   openFile: () => Promise<{ success: boolean; content?: DiagramProject; filePath?: string }>
   printReport: (html: string, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
-  exportExcel: (buffer: ArrayBuffer, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
+  exportExcel: (base64: string, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   onMenu: (channel: string, cb: () => void) => () => void
   loadLibrary: () => Promise<UserInterface[]>
   saveLibrary: (items: UserInterface[]) => Promise<boolean>

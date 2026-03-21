@@ -155,13 +155,13 @@ ipcMain.handle('dialog:export-interfaces', async (_, { items, defaultName }) => 
 
 // ── Export to Excel ──────────────────────────────────────────────────────────
 
-ipcMain.handle('dialog:export-excel', async (_, { buffer, defaultName }) => {
+ipcMain.handle('dialog:export-excel', async (_, { base64, defaultName }) => {
   const { filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName ?? 'export.xlsx',
     filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
   })
   if (!filePath) return { success: false }
-  writeFileSync(filePath, Buffer.from(buffer))
+  writeFileSync(filePath, Buffer.from(base64, 'base64'))
   return { success: true, filePath }
 })
 

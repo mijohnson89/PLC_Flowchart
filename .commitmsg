@@ -1,8 +1,5 @@
-Add Export to Excel feature with separate tabs for all project data
+Excel Export
 
-- Add xlsx dependency for Excel workbook generation
-- Create exportToExcel utility that builds sheets for: Diagrams, Flowchart Nodes, Sequence Messages, Conditions, Interfaces, Instances, IO Table, Locations, Tasks, Alarms, and C&E Matrix
-- Add Export Excel button to Toolbar with Ctrl+Shift+E shortcut
-- Add menu item under File > Export to Excel
-- Wire up IPC handler (dialog:export-excel) for save dialog and file write
-- Add exportExcel method to preload bridge and ElectronAPI type
+- Rework export to produce IO tab + one C&E matrix tab per flowchart
+- Fix IPC serialisation by using base64 encoding instead of Uint8Array
+- Add error handling to export handler

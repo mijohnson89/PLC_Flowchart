@@ -69,9 +69,13 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
   }
 
   async function handleExportExcel() {
-    const data = exportToExcel()
-    const name = `${useDiagramStore.getState().projectName}.xlsx`
-    await window.api.exportExcel(data.buffer, name)
+    try {
+      const base64 = exportToExcel()
+      const name = `${useDiagramStore.getState().projectName}.xlsx`
+      await window.api.exportExcel(base64, name)
+    } catch (err) {
+      console.error('[ExportExcel] error:', err)
+    }
   }
 
   function commitName() {
