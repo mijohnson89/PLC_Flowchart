@@ -5,9 +5,8 @@ contextBridge.exposeInMainWorld('api', {
   saveFile: (content: unknown, defaultName?: string) =>
     ipcRenderer.invoke('dialog:save', { content, defaultName }),
   openFile: () => ipcRenderer.invoke('dialog:open'),
-  exportImage: (ext: string) => ipcRenderer.invoke('dialog:export-image', { ext }),
-  writeFile: (filePath: string, data: string, encoding?: string) =>
-    ipcRenderer.invoke('fs:write', { filePath, data, encoding }),
+  printReport: (html: string, defaultName?: string) =>
+    ipcRenderer.invoke('print:report', { html, defaultName }),
 
   // Global Interface Library
   loadLibrary: () => ipcRenderer.invoke('library:load'),
@@ -20,7 +19,6 @@ contextBridge.exposeInMainWorld('api', {
   onMenu: (channel: string, cb: () => void) => {
     const validChannels = [
       'menu-new', 'menu-open', 'menu-save', 'menu-save-as',
-      'menu-export-png', 'menu-export-svg', 'menu-export-pdf', 'menu-print-pdf',
       'menu-print-report',
       'menu-undo', 'menu-redo', 'menu-delete', 'menu-fit', 'menu-select-all'
     ]

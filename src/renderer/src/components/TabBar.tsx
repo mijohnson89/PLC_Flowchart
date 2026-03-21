@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2 } from 'lucide-react'
+import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2, BellRing } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { DiagramMode, DiagramTab } from '../types'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
   flowchart: <Network size={12} />,
@@ -105,6 +105,7 @@ export function TabBar() {
   const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
   const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
+  const isAlarmsActive = activeTabId === ALARMS_TAB_ID
   const openTabs = openTabIds
     .map((id) => tabs.find((t) => t.id === id))
     .filter((t): t is DiagramTab => t !== undefined)
@@ -209,6 +210,25 @@ export function TabBar() {
             <TableProperties size={12} />
           </span>
           <span>IO Table</span>
+        </div>
+
+        {/* Static Alarms tab */}
+        <div
+          onClick={() => setActiveTab(ALARMS_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isAlarmsActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Alarms — once-off and per-instance alarms"
+        >
+          <span className={isAlarmsActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <BellRing size={12} />
+          </span>
+          <span>Alarms</span>
         </div>
 
         {/* Divider between static tabs and diagram tabs */}

@@ -196,6 +196,8 @@ export interface InterfaceField {
   description?: string
   defaultValue?: string
   includeInMatrix?: boolean // explicit override for C&E matrix inclusion
+  isAlarm?: boolean         // marks this field as an alarm point (per-instance)
+  alarmMessage?: string     // alarm description, prefixed by instance name at display time
 }
 
 export interface UserInterface {
@@ -251,6 +253,7 @@ export interface TaskAutoGenSettings {
   analogSAT: boolean
   sequenceTesting: boolean
   deviceTesting: boolean
+  alarmTesting: boolean
 }
 
 // ── IO Table ──────────────────────────────────────────────────────────────────
@@ -288,6 +291,33 @@ export interface IOEntry {
   maxEUScale: string
 }
 
+// ── Alarms ───────────────────────────────────────────────────────────────────
+
+export const ALARMS_TAB_ID = '__alarms__'
+
+export interface Alarm {
+  id: string
+  description: string
+}
+
+// ── Flowchart Conditions ──────────────────────────────────────────────────────
+
+export type ConditionAction = 'pause' | 'stop' | 'abort'
+
+export interface ConditionCause {
+  id: string
+  description: string
+  linkedAlarmRef?: string   // "alarm:{alarmId}" or "inst:{instanceId}:{fieldId}"
+}
+
+export interface FlowCondition {
+  id: string
+  description: string
+  action: ConditionAction
+  causes: ConditionCause[]
+  linkedAlarmRef?: string   // "alarm:{alarmId}" or "field:{interfaceId}:{fieldId}"
+}
+
 // ── Cause & Effect Matrix ─────────────────────────────────────────────────────
 
 /** Sparse 3-level map: stepNodeId → instanceId → fieldId → value */
@@ -321,6 +351,7 @@ export interface DiagramTab {
   revisions: Revision[]
   pageSize: PageSizeKey | null
   pageOrientation: PageOrientation
+  conditions: FlowCondition[]
 }
 
 // ── Project ──────────────────────────────────────────────────────────────────
@@ -348,6 +379,7 @@ export interface DiagramProject {
   tasks?: Task[]
   taskNotes?: string
   taskAutoGen?: TaskAutoGenSettings
+  alarms?: Alarm[]
 }
 
 // ── Electron API ─────────────────────────────────────────────────────────────
@@ -355,8 +387,7 @@ export interface DiagramProject {
 export interface ElectronAPI {
   saveFile: (content: unknown, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   openFile: () => Promise<{ success: boolean; content?: DiagramProject; filePath?: string }>
-  exportImage: (ext: string) => Promise<string | null>
-  writeFile: (filePath: string, data: string, encoding?: string) => Promise<boolean>
+  printReport: (html: string, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   onMenu: (channel: string, cb: () => void) => () => void
   loadLibrary: () => Promise<UserInterface[]>
   saveLibrary: (items: UserInterface[]) => Promise<boolean>

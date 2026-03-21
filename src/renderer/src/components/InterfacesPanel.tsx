@@ -3,7 +3,7 @@ import type { ReactNode, ErrorInfo } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Cpu, Database,
   Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2,
-  BookMarked, Upload, Download, CheckCircle2
+  BookMarked, Upload, Download, CheckCircle2, BellRing
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type {
@@ -97,12 +97,6 @@ function FieldRow({
           value={draft.description ?? ''}
           onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
         />
-        <input
-          className="w-24 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          placeholder="Default"
-          value={draft.defaultValue ?? ''}
-          onChange={(e) => setDraft((d) => ({ ...d, defaultValue: e.target.value }))}
-        />
         <label className="flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer select-none" title="Include in Cause & Effect matrix">
           <input
             type="checkbox"
@@ -112,6 +106,24 @@ function FieldRow({
           />
           C&amp;E
         </label>
+        <label className="flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer select-none" title="Mark as alarm field">
+          <input
+            type="checkbox"
+            className="accent-amber-600 w-3.5 h-3.5"
+            checked={draft.isAlarm ?? false}
+            onChange={(e) => setDraft((d) => ({ ...d, isAlarm: e.target.checked, alarmMessage: e.target.checked ? d.alarmMessage : undefined }))}
+          />
+          <BellRing size={10} className="text-amber-500" />
+          Alarm
+        </label>
+        {draft.isAlarm && (
+          <input
+            className="flex-1 min-w-[120px] text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-amber-50/50"
+            placeholder="Alarm message (e.g. Thermal Overload)"
+            value={draft.alarmMessage ?? ''}
+            onChange={(e) => setDraft((d) => ({ ...d, alarmMessage: e.target.value }))}
+          />
+        )}
         <div className="flex gap-1">
           <button onClick={save} className="p-1 text-indigo-600 hover:text-indigo-800 rounded" title="Save">
             <Check size={14} />
@@ -133,6 +145,13 @@ function FieldRow({
         onChange={(e) => onUpdate({ includeInMatrix: e.target.checked })}
         title="Include in Cause & Effect matrix"
       />
+      <input
+        type="checkbox"
+        className="accent-amber-600 w-3.5 h-3.5 flex-shrink-0 cursor-pointer"
+        checked={field.isAlarm ?? false}
+        onChange={(e) => onUpdate({ isAlarm: e.target.checked })}
+        title="Alarm field"
+      />
       <span className="font-mono font-semibold text-gray-800 w-32 truncate" title={field.name}>{field.name}</span>
       <span className="font-mono text-indigo-600 w-28 truncate">{field.dataType}</span>
       {isAOI && field.usage && (
@@ -140,11 +159,14 @@ function FieldRow({
           {field.usage}
         </span>
       )}
+      {field.isAlarm && (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10px] text-amber-700 truncate max-w-[200px]" title={field.alarmMessage || 'No alarm message'}>
+          <BellRing size={8} />
+          {field.alarmMessage || <span className="italic text-amber-400">No message</span>}
+        </span>
+      )}
       {field.description && (
         <span className="text-gray-400 flex-1 truncate">{field.description}</span>
-      )}
-      {field.defaultValue && (
-        <span className="font-mono text-gray-500 text-[10px]">= {field.defaultValue}</span>
       )}
       <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
@@ -174,7 +196,6 @@ function AddFieldRow({ isAOI, onAdd }: { isAOI: boolean; onAdd: (f: InterfaceFie
   const [dataType, setDataType] = useState('BOOL')
   const [usage, setUsage] = useState<AOIFieldUsage>('Local')
   const [description, setDescription] = useState('')
-  const [defaultValue, setDefaultValue] = useState('')
 
   function submit() {
     if (!name.trim()) return
@@ -183,12 +204,10 @@ function AddFieldRow({ isAOI, onAdd }: { isAOI: boolean; onAdd: (f: InterfaceFie
       name: name.trim(),
       dataType,
       usage: isAOI ? usage : undefined,
-      description: description.trim() || undefined,
-      defaultValue: defaultValue.trim() || undefined
+      description: description.trim() || undefined
     })
     setName('')
     setDescription('')
-    setDefaultValue('')
     setOpen(false)
   }
 
@@ -234,12 +253,6 @@ function AddFieldRow({ isAOI, onAdd }: { isAOI: boolean; onAdd: (f: InterfaceFie
         placeholder="Description (optional)"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-      />
-      <input
-        className="w-24 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-        placeholder="Default"
-        value={defaultValue}
-        onChange={(e) => setDefaultValue(e.target.value)}
       />
       <div className="flex gap-1">
         <button onClick={submit} disabled={!name.trim()} className="p-1 text-indigo-600 hover:text-indigo-800 disabled:opacity-40 rounded" title="Add">
@@ -381,6 +394,13 @@ function InterfaceCard({ iface, onSaveToLibrary }: { iface: UserInterface; onSav
       {/* Expanded: fields */}
       {expanded && (
         <div className="px-4 py-2 flex flex-col gap-0.5">
+          {iface.fields.length > 0 && (
+            <div className="flex items-center gap-3 px-2 pb-0.5 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+              <span className="w-3.5 text-center" title="Include in Cause & Effect matrix">C&amp;E</span>
+              <span className="w-3.5 text-center" title="Alarm field"><BellRing size={8} /></span>
+              <span>Field</span>
+            </div>
+          )}
           {iface.fields.length === 0 && (
             <p className="text-xs text-gray-400 italic py-1">No fields defined yet.</p>
           )}
@@ -955,7 +975,6 @@ function LibraryPanel() {
       dataType,
       usage: safeUsage,
       description: src.description ? String(src.description) : undefined,
-      defaultValue: src.defaultValue !== undefined ? String(src.defaultValue) : undefined,
       includeInMatrix: typeof src.includeInMatrix === 'boolean' ? src.includeInMatrix : undefined
     }
   }

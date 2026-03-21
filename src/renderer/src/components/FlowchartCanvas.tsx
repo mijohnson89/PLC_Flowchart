@@ -7,13 +7,11 @@ import {
 } from '@xyflow/react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
-import { toPng, toSvg } from 'html-to-image'
-import { Link2, Link2Off, Lock, LayoutList, Sparkles, Grid3x3, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Link2, Link2Off, Lock, LayoutList, Sparkles, Grid3x3, PanelRightClose, PanelRightOpen, ShieldAlert, PanelBottomClose, PanelBottomOpen } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
 import type { PLCNodeData, PLCNodeType, PLCNode, PLCEdge } from '../types'
-import { pageDimensions } from '../types'
 import { AlignmentToolbar } from './AlignmentToolbar'
 import { GuideLinesOverlay } from './GuideLinesOverlay'
 import { PageBoundaryOverlay } from './PageBoundaryOverlay'
@@ -92,17 +90,12 @@ const EDGE_TYPES = {
 import { uid } from '../utils/uid'
 
 
-export interface CanvasExportRef {
-  exportPng: () => Promise<void>
-  exportSvg: () => Promise<void>
-  exportPdf: () => Promise<void>
-}
-
 interface FlowchartCanvasProps {
-  exportRef?: React.MutableRefObject<CanvasExportRef | null>
   readOnly?: boolean
   showMatrix?: boolean
   onToggleMatrix?: () => void
+  showConditions?: boolean
+  onToggleConditions?: () => void
 }
 
 // Inner component — has access to useReactFlow (must be inside ReactFlow provider)
@@ -111,13 +104,17 @@ function CanvasInner({
   pendingSourceId,
   readOnly,
   showMatrix,
-  onToggleMatrix
+  onToggleMatrix,
+  showConditions,
+  onToggleConditions
 }: {
   connectMode: boolean
   pendingSourceId: string | null
   readOnly: boolean
   showMatrix?: boolean
   onToggleMatrix?: () => void
+  showConditions?: boolean
+  onToggleConditions?: () => void
 }) {
   const { getNode } = useReactFlow()
 
@@ -135,6 +132,21 @@ function CanvasInner({
       {/* Top-right controls: C&E toggle + Page size */}
       <Panel position="top-right">
         <div className="flex items-center gap-1.5 pointer-events-auto">
+          {onToggleConditions && (
+            <button
+              onClick={onToggleConditions}
+              title={showConditions ? 'Hide conditions panel' : 'Show conditions panel'}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shadow text-xs font-medium transition-all border ${
+                showConditions
+                  ? 'bg-red-600 text-white border-red-700 hover:bg-red-700'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-red-400 hover:text-red-600'
+              }`}
+            >
+              <ShieldAlert size={13} />
+              {showConditions ? <PanelBottomClose size={13} /> : <PanelBottomOpen size={13} />}
+              Conditions
+            </button>
+          )}
           {onToggleMatrix && (
             <button
               onClick={onToggleMatrix}
@@ -174,7 +186,7 @@ function CanvasInner({
   )
 }
 
-export function FlowchartCanvas({ exportRef, readOnly = false, showMatrix, onToggleMatrix }: FlowchartCanvasProps) {
+export function FlowchartCanvas({ readOnly = false, showMatrix, onToggleMatrix, showConditions, onToggleConditions }: FlowchartCanvasProps) {
   const flowNodes = useDiagramStore(selectFlowNodes)
   const flowEdges = useDiagramStore(selectFlowEdges)
   const {
@@ -622,109 +634,6 @@ export function FlowchartCanvas({ exportRef, readOnly = false, showMatrix, onTog
     pushHistory()
   }, [flowNodes, flowEdges, setFlowNodes, setFlowEdges, setLastTouchedNodeId, setSelectedNode, pushHistory])
 
-  // ── Export ────────────────────────────────────────────────────────────────
-  const exportPng = useCallback(async () => {
-    const el = wrapperRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null
-    if (!el) return
-    const filePath = await window.api.exportImage('png')
-    if (!filePath) return
-    const dataUrl = await toPng(el, { backgroundColor: '#ffffff', pixelRatio: 2 })
-    const base64 = dataUrl.split(',')[1]
-    await window.api.writeFile(filePath, base64, 'base64')
-  }, [])
-
-  const exportSvg = useCallback(async () => {
-    const el = wrapperRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null
-    if (!el) return
-    const filePath = await window.api.exportImage('svg')
-    if (!filePath) return
-    const svgData = await toSvg(el, { backgroundColor: '#ffffff' })
-    const encoded = svgData.split(',').slice(1).join(',')
-    const svgContent = decodeURIComponent(encoded)
-    await window.api.writeFile(filePath, svgContent)
-  }, [])
-
-  const exportPdf = useCallback(async () => {
-    const rf = rfRef.current
-    const rendererEl = wrapperRef.current?.querySelector('.react-flow__renderer') as HTMLElement | null
-    if (!rf || !rendererEl) return
-
-    // Resolve page settings from store (read outside React render cycle)
-    const storeState = useDiagramStore.getState()
-    const activeTab  = storeState.tabs.find((t) => t.id === storeState.activeTabId)
-    const ps         = activeTab?.pageSize ?? null
-    const po         = activeTab?.pageOrientation ?? 'portrait'
-
-    if (!ps) {
-      alert('Please set a page size first using the Page button in the canvas toolbar.')
-      return
-    }
-
-    const filePath = await window.api.exportImage('pdf')
-    if (!filePath) return
-
-    const { w: pageW, h: pageH } = pageDimensions(ps, po)
-
-    // ── 1. Save current viewport, then fit exactly to the page rect ──────────
-    const savedViewport = rf.getViewport()
-    rf.fitBounds({ x: 0, y: 0, width: pageW, height: pageH }, { padding: 0, duration: 0 })
-
-    // Wait two animation frames for the DOM to settle after the viewport change
-    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
-
-    // ── 2. Read the actual viewport after fitBounds ───────────────────────────
-    const { x: tx, y: ty, zoom } = rf.getViewport()
-
-    // ── 3. Capture the full renderer area, excluding the page-boundary overlay ─
-    const PIXEL_RATIO = 3
-    const fullDataUrl = await toPng(rendererEl, {
-      backgroundColor: '#ffffff',
-      pixelRatio: PIXEL_RATIO,
-      filter: (node) => (node as HTMLElement).dataset?.exportSkip !== 'true'
-    })
-
-    // ── 4. Restore the viewport ───────────────────────────────────────────────
-    rf.setViewport(savedViewport, { duration: 0 })
-
-    // ── 5. Crop the captured image to just the page area ─────────────────────
-    // After fitBounds, canvas (0,0) is at screen (tx, ty).
-    // Page occupies screen rect: (tx, ty, pageW*zoom, pageH*zoom)
-    const img = new Image()
-    await new Promise<void>((resolve) => { img.onload = () => resolve(); img.src = fullDataUrl })
-
-    const cropX = Math.round(tx * PIXEL_RATIO)
-    const cropY = Math.round(ty * PIXEL_RATIO)
-    const cropW = Math.min(Math.round(pageW * zoom * PIXEL_RATIO), img.width  - cropX)
-    const cropH = Math.min(Math.round(pageH * zoom * PIXEL_RATIO), img.height - cropY)
-
-    const cropCanvas = document.createElement('canvas')
-    cropCanvas.width  = cropW
-    cropCanvas.height = cropH
-    const ctx = cropCanvas.getContext('2d')!
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, cropW, cropH)
-    ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-
-    const croppedDataUrl = cropCanvas.toDataURL('image/png')
-
-    // ── 6. Build and save PDF ─────────────────────────────────────────────────
-    const { jsPDF } = await import('jspdf')
-    const doc = new jsPDF({
-      orientation: po === 'portrait' ? 'p' : 'l',
-      unit: 'mm',
-      format: ps.toLowerCase() as 'a4' | 'a3' | 'a2' | 'a1' | 'a0'
-    })
-    const pdfW = doc.internal.pageSize.getWidth()
-    const pdfH = doc.internal.pageSize.getHeight()
-    doc.addImage(croppedDataUrl, 'PNG', 0, 0, pdfW, pdfH)
-
-    const pdfDataUri = doc.output('datauristring')
-    const base64     = pdfDataUri.split(',')[1]
-    await window.api.writeFile(filePath, base64, 'base64')
-  }, [])
-
-  if (exportRef) exportRef.current = { exportPng, exportSvg, exportPdf }
-
   // Reactively style edges: backward-flow edges get routed to the right side,
   // dashed animation, and smoothstep routing. All edges get arrow markers.
   const arrow = { type: MarkerType.ArrowClosed, width: 16, height: 16 }
@@ -878,6 +787,8 @@ export function FlowchartCanvas({ exportRef, readOnly = false, showMatrix, onTog
           readOnly={readOnly}
           showMatrix={showMatrix}
           onToggleMatrix={onToggleMatrix}
+          showConditions={showConditions}
+          onToggleConditions={onToggleConditions}
         />
       </ReactFlow>
     </div>

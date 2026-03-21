@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
 function createWindow(): BrowserWindow {
@@ -43,12 +44,7 @@ function buildMenu(win: BrowserWindow): void {
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => win.webContents.send('menu-save') },
         { label: 'Save As...', accelerator: 'CmdOrCtrl+Shift+S', click: () => win.webContents.send('menu-save-as') },
         { type: 'separator' },
-        { label: 'Export as PNG',   click: () => win.webContents.send('menu-export-png') },
-        { label: 'Export as SVG',   click: () => win.webContents.send('menu-export-svg') },
-        { label: 'Export as PDF',   click: () => win.webContents.send('menu-export-pdf') },
-        { type: 'separator' },
-        { label: 'Print to PDF…', accelerator: 'CmdOrCtrl+P', click: () => win.webContents.send('menu-print-pdf') },
-        { label: 'Print Report…', accelerator: 'CmdOrCtrl+Shift+P', click: () => win.webContents.send('menu-print-report') },
+        { label: 'Print Report…', accelerator: 'CmdOrCtrl+P', click: () => win.webContents.send('menu-print-report') },
         { type: 'separator' },
         { role: 'quit' }
       ]
@@ -120,14 +116,6 @@ ipcMain.handle('dialog:open', async () => {
   return { success: true, content: JSON.parse(raw), filePath: filePaths[0] }
 })
 
-ipcMain.handle('dialog:export-image', async (_, { ext }) => {
-  const { filePath } = await dialog.showSaveDialog({
-    defaultPath: `diagram.${ext}`,
-    filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
-  })
-  return filePath ?? null
-})
-
 // ── Global Interface Library ─────────────────────────────────────────────────
 
 const LIBRARY_FILE = join(app.getPath('userData'), 'interface-library.json')
@@ -164,13 +152,46 @@ ipcMain.handle('dialog:export-interfaces', async (_, { items, defaultName }) => 
   return true
 })
 
-// ── File write ───────────────────────────────────────────────────────────────
+// ── Print report ─────────────────────────────────────────────────────────────
 
-ipcMain.handle('fs:write', async (_, { filePath, data, encoding }) => {
-  if (encoding === 'base64') {
-    writeFileSync(filePath, Buffer.from(data as string, 'base64'))
-  } else {
-    writeFileSync(filePath, data as string, 'utf-8')
+ipcMain.handle('print:report', async (_, { html, defaultName }) => {
+  const tmpPath = join(tmpdir(), `plc-report-${Date.now()}.html`)
+  writeFileSync(tmpPath, html, 'utf-8')
+
+  const printWin = new BrowserWindow({
+    width: 1000,
+    height: 800,
+    show: false,
+    webPreferences: { sandbox: false }
+  })
+
+  await printWin.loadFile(tmpPath)
+
+  // Wait for Chromium to finish layout (fonts, flexbox, page-break calculations)
+  await printWin.webContents.executeJavaScript(
+    'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))'
+  )
+
+  try {
+    const pdfBuffer = await printWin.webContents.printToPDF({
+      printBackground: true,
+      margins: { marginType: 'custom', top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 },
+      pageSize: 'A4',
+      landscape: false
+    })
+
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: defaultName ?? 'report.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+
+    if (filePath) {
+      writeFileSync(filePath, pdfBuffer)
+      return { success: true, filePath }
+    }
+    return { success: false }
+  } finally {
+    printWin.close()
+    try { unlinkSync(tmpPath) } catch { /* ignore */ }
   }
-  return true
 })

@@ -7,11 +7,6 @@ function parseDescription(attrs: string): string | undefined {
   return m?.[1]?.trim() || undefined
 }
 
-function parseDefaultValue(attrs: string): string | undefined {
-  const m = attrs.match(/DefaultData\s*:=\s*([^,\)]+)/i)
-  return m?.[1]?.trim() || undefined
-}
-
 function parseUsage(attrs: string): AOIFieldUsage | undefined {
   const m = attrs.match(/Usage\s*:=\s*(Input|Output|InOut|Local)/i)
   const usage = m?.[1]
@@ -61,7 +56,6 @@ function parseAoiParameter(statement: string): InterfaceField | null {
     dataType,
     usage: parseUsage(attrs),
     description: parseDescription(attrs),
-    defaultValue: parseDefaultValue(attrs),
     includeInMatrix: false
   }
 }

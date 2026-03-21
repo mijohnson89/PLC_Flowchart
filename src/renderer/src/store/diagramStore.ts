@@ -10,7 +10,9 @@ import type {
   Plant, Area, Location,
   TreeFolder,
   Task, SubTask, TaskAutoGenSettings,
-  IORack, IOSlot, IOEntry
+  IORack, IOSlot, IOEntry,
+  FlowCondition, ConditionCause, ConditionAction,
+  Alarm,
 } from '../types'
 import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
@@ -44,7 +46,8 @@ function emptyTab(name: string, type: DiagramMode): DiagramTab {
     lastTouchedNodeId: null,
     revisions: [],
     pageSize: null,
-    pageOrientation: 'portrait'
+    pageOrientation: 'portrait',
+    conditions: []
   }
 }
 
@@ -224,6 +227,14 @@ interface DiagramStore {
   // ── Page Size ──────────────────────────────────────────────────────────────
   setPageSettings: (size: PageSizeKey | null, orientation: PageOrientation) => void
 
+  // ── Conditions (per-tab) ──────────────────────────────────────────────────
+  addCondition: (condition: FlowCondition) => void
+  updateCondition: (id: string, patch: Partial<Pick<FlowCondition, 'description' | 'action' | 'linkedAlarmRef'>>) => void
+  removeCondition: (id: string) => void
+  addConditionCause: (conditionId: string, cause: ConditionCause) => void
+  updateConditionCause: (conditionId: string, causeId: string, patch: Partial<Pick<ConditionCause, 'description' | 'linkedAlarmRef'>>) => void
+  removeConditionCause: (conditionId: string, causeId: string) => void
+
   // ── Revision History ───────────────────────────────────────────────────────
   viewingRevisionId: string | null
   createRevision: (name: string, author: string, description?: string) => void
@@ -308,6 +319,12 @@ interface DiagramStore {
   setTaskNotes: (html: string) => void
   taskAutoGen: TaskAutoGenSettings
   setTaskAutoGen: (patch: Partial<TaskAutoGenSettings>) => void
+
+  // ── Alarms ────────────────────────────────────────────────────────────────
+  alarms: Alarm[]
+  addAlarm: (alarm: Alarm) => void
+  updateAlarm: (id: string, patch: Partial<Pick<Alarm, 'description'>>) => void
+  removeAlarm: (id: string) => void
 
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => void
@@ -750,6 +767,95 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     }))
   },
 
+  // ── Conditions (per-tab) ──────────────────────────────────────────────────
+  addCondition: (condition) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, { conditions: [...tab.conditions, condition] }),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
+  },
+
+  updateCondition: (id, patch) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, {
+          conditions: tab.conditions.map((c) => c.id === id ? { ...c, ...patch } : c)
+        }),
+        isDirty: true
+      }
+    })
+  },
+
+  removeCondition: (id) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, {
+          conditions: tab.conditions.filter((c) => c.id !== id)
+        }),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
+  },
+
+  addConditionCause: (conditionId, cause) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, {
+          conditions: tab.conditions.map((c) =>
+            c.id === conditionId ? { ...c, causes: [...c.causes, cause] } : c
+          )
+        }),
+        isDirty: true
+      }
+    })
+  },
+
+  updateConditionCause: (conditionId, causeId, patch) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, {
+          conditions: tab.conditions.map((c) =>
+            c.id === conditionId
+              ? { ...c, causes: c.causes.map((ca) => ca.id === causeId ? { ...ca, ...patch } : ca) }
+              : c
+          )
+        }),
+        isDirty: true
+      }
+    })
+  },
+
+  removeConditionCause: (conditionId, causeId) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, {
+          conditions: tab.conditions.map((c) =>
+            c.id === conditionId
+              ? { ...c, causes: c.causes.filter((ca) => ca.id !== causeId) }
+              : c
+          )
+        }),
+        isDirty: true
+      }
+    })
+  },
+
   // ── Revision History ───────────────────────────────────────────────────────
   viewingRevisionId: null,
 
@@ -882,14 +988,28 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       interfaceInstances: [...s.interfaceInstances, instance],
       isDirty: true
     }
+    const iface = s.userInterfaces.find((ui) => ui.id === instance.interfaceId)
+    let tasks = s.tasks
+
     if (s.taskAutoGen.deviceTesting) {
-      const iface = s.userInterfaces.find((ui) => ui.id === instance.interfaceId)
       if (iface && iface.type === 'AOI') {
         const label = instance.name || instance.tagName
-        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:devices', 'Devices')
-        result.tasks = addAutoGenSubTask(t1, task.id, label, label, { linkedInstanceId: instance.id })
+        const { tasks: t1, task } = findOrCreateAutoGenTask(tasks, 'auto:devices', 'Devices')
+        tasks = addAutoGenSubTask(t1, task.id, label, label, { linkedInstanceId: instance.id })
       }
     }
+
+    if (s.taskAutoGen.alarmTesting && iface) {
+      const alarmFields = iface.fields.filter((f) => f.isAlarm)
+      for (const field of alarmFields) {
+        const msg = field.alarmMessage || field.name
+        const label = `${instance.name || instance.tagName} ${msg}`
+        const { tasks: t1, task } = findOrCreateAutoGenTask(tasks, 'auto:alarms', 'Alarms')
+        tasks = addAutoGenSubTask(t1, task.id, label, label, { linkedInstanceId: instance.id })
+      }
+    }
+
+    if (tasks !== s.tasks) result.tasks = tasks
     return result
   }),
   updateInterfaceInstance: (id, patch) => set((s) => ({ interfaceInstances: updateById(s.interfaceInstances, id, patch), isDirty: true })),
@@ -902,14 +1022,39 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     isDirty: true
   })),
 
-  updateFieldInInterface: (interfaceId, fieldId, patch) => set((s) => ({
-    userInterfaces: s.userInterfaces.map((i) =>
-      i.id === interfaceId
-        ? { ...i, fields: i.fields.map((f) => f.id === fieldId ? { ...f, ...patch } : f) }
-        : i
-    ),
-    isDirty: true
-  })),
+  updateFieldInInterface: (interfaceId, fieldId, patch) => set((s) => {
+    const iface = s.userInterfaces.find((i) => i.id === interfaceId)
+    const oldField = iface?.fields.find((f) => f.id === fieldId)
+    const becomingAlarm = patch.isAlarm === true && !(oldField?.isAlarm)
+
+    const result: Record<string, unknown> = {
+      userInterfaces: s.userInterfaces.map((i) =>
+        i.id === interfaceId
+          ? { ...i, fields: i.fields.map((f) => f.id === fieldId ? { ...f, ...patch } : f) }
+          : i
+      ),
+      isDirty: true
+    }
+
+    if (s.taskAutoGen.alarmTesting && becomingAlarm && iface) {
+      const msg = patch.alarmMessage || oldField?.alarmMessage || oldField?.name || 'Alarm'
+      const instances = s.interfaceInstances.filter((inst) => inst.interfaceId === interfaceId)
+      let tasks = s.tasks
+      const { tasks: t1, task } = findOrCreateAutoGenTask(tasks, 'auto:alarms', 'Alarms')
+      tasks = t1
+      for (const inst of instances) {
+        const label = `${inst.name} ${msg}`
+        tasks = addAutoGenSubTask(tasks, task.id, label, label, { linkedInstanceId: inst.id })
+      }
+      if (instances.length === 0) {
+        const label = `${iface.name} — ${msg}`
+        tasks = addAutoGenSubTask(tasks, task.id, label, label)
+      }
+      result.tasks = tasks
+    }
+
+    return result
+  }),
 
   removeFieldFromInterface: (interfaceId, fieldId) => set((s) => ({
     userInterfaces: s.userInterfaces.map((i) =>
@@ -1152,8 +1297,33 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   taskNotes: '',
   setTaskNotes: (html) => set({ taskNotes: html, isDirty: true }),
 
-  taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true },
+  taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true },
   setTaskAutoGen: (patch) => set((s) => ({ taskAutoGen: { ...s.taskAutoGen, ...patch }, isDirty: true })),
+
+  // ── Alarms ────────────────────────────────────────────────────────────────
+  alarms: [],
+
+  addAlarm: (alarm) => {
+    set((s) => {
+      const result: Record<string, unknown> = { alarms: [...s.alarms, alarm], isDirty: true }
+      if (s.taskAutoGen.alarmTesting) {
+        const { tasks: t1, task } = findOrCreateAutoGenTask(s.tasks, 'auto:alarms', 'Alarms')
+        result.tasks = addAutoGenSubTask(t1, task.id, alarm.description, alarm.description)
+      }
+      return result
+    })
+  },
+
+  updateAlarm: (id, patch) => {
+    set((s) => ({
+      alarms: s.alarms.map((a) => a.id === id ? { ...a, ...patch } : a),
+      isDirty: true
+    }))
+  },
+
+  removeAlarm: (id) => {
+    set((s) => ({ alarms: s.alarms.filter((a) => a.id !== id), isDirty: true }))
+  },
 
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => {
@@ -1184,7 +1354,8 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioEntries: [],
       tasks: [],
       taskNotes: '',
-      taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true }
+      taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true },
+      alarms: []
     })
   },
 
@@ -1195,7 +1366,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     if (project.tabs) {
       tabs = project.tabs.map((t) => ({
         revisions: [], pageSize: null, pageOrientation: 'portrait' as PageOrientation,
-        folderId: null, sortIndex: 0,
+        folderId: null, sortIndex: 0, conditions: [],
         ...t
       }))
       activeTabId = project.activeTabId ?? project.tabs[0]?.id
@@ -1242,12 +1413,13 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioEntries: project.ioEntries ?? [],
       tasks: project.tasks ?? [],
       taskNotes: project.taskNotes ?? '',
-      taskAutoGen: project.taskAutoGen ?? { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true }
+      taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true, ...project.taskAutoGen },
+      alarms: project.alarms ?? []
     })
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen } = get()
+    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen, alarms } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
@@ -1269,7 +1441,8 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       ioEntries,
       tasks,
       taskNotes,
-      taskAutoGen
+      taskAutoGen,
+      alarms
     }
   }
 }))

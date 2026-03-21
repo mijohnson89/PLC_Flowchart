@@ -3,10 +3,10 @@ import {
   ChevronDown, ChevronRight, Network, AlignJustify,
   FolderClosed, FolderOpen, Layers, FolderPlus,
   Pencil, Trash2, Copy, FolderInput, Plus, ClipboardList, TableProperties,
-  Building2
+  Building2, BellRing
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID } from '../types'
 import type { DiagramTab, DiagramMode, TreeFolder } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
@@ -287,6 +287,7 @@ export function DiagramTreeView() {
   const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
   const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
+  const isAlarmsActive = activeTabId === ALARMS_TAB_ID
 
   const toggle = (key: string) =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -430,6 +431,15 @@ export function DiagramTreeView() {
           isActive={isIOTableActive}
           depth={0}
           onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
+        />
+
+        {/* Alarms entry */}
+        <TreeLeafButton
+          label="Alarms"
+          icon={<BellRing size={11} />}
+          isActive={isAlarmsActive}
+          depth={0}
+          onClick={() => setActiveTab(ALARMS_TAB_ID)}
         />
 
         <div className="h-px bg-gray-100 mx-3 my-1" />

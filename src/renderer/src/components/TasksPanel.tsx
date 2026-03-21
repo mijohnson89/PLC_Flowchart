@@ -945,6 +945,7 @@ const AUTO_GEN_RULES: { key: keyof TaskAutoGenSettings; label: string; desc: str
   { key: 'analogSAT',       label: 'Analog → SAT',         desc: 'Each analog channel creates a scaling check under "Site Acceptance Test"' },
   { key: 'sequenceTesting',  label: 'Sequence → Testing',   desc: 'Each new flowchart creates an entry under "Sequences"' },
   { key: 'deviceTesting',    label: 'AOI Instance → Device', desc: 'Each AOI instance creates an entry under "Devices"' },
+  { key: 'alarmTesting',     label: 'Alarm → Testing',      desc: 'Each alarm (once-off and per-instance) creates an entry under "Alarms"' },
 ]
 
 function AutoGenSettingsPopover({ onClose }: { onClose: () => void }) {
@@ -1005,7 +1006,7 @@ export function TasksPanel() {
   const [hideCompleted, setHideCompleted] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const autoGen = useDiagramStore((s) => s.taskAutoGen)
-  const anyAutoGenOn = autoGen.ioCardFAT || autoGen.analogSAT || autoGen.sequenceTesting || autoGen.deviceTesting
+  const anyAutoGenOn = autoGen.ioCardFAT || autoGen.analogSAT || autoGen.sequenceTesting || autoGen.deviceTesting || autoGen.alarmTesting
 
   const completedCount = tasks.filter(isTaskComplete).length
   const visibleTasks = hideCompleted ? tasks.filter((t) => !isTaskComplete(t)) : tasks

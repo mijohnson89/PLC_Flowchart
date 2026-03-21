@@ -6,7 +6,6 @@ import { TabBar } from './components/TabBar'
 import { Sidebar } from './components/Sidebar'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { FlowchartCanvas } from './components/FlowchartCanvas'
-import type { CanvasExportRef } from './components/FlowchartCanvas'
 import { SequenceCanvas } from './components/SequenceCanvas'
 import { RevisionPanel } from './components/RevisionPanel'
 import { RevisionChangesTable } from './components/RevisionChangesTable'
@@ -15,9 +14,11 @@ import { DiagramTreeView } from './components/DiagramTreeView'
 import { MatrixView } from './components/MatrixView'
 import { TasksPanel } from './components/TasksPanel'
 import { IOTablePanel } from './components/IOTablePanel'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from './types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID } from './types'
 import { LocationsPanel } from './components/LocationsPanel'
-import { Grid3x3 } from 'lucide-react'
+import { ConditionsPanel } from './components/ConditionsPanel'
+import { AlarmsPanel } from './components/AlarmsPanel'
+import { Grid3x3, ShieldAlert } from 'lucide-react'
 
 // ── Error boundary ────────────────────────────────────────────────────────────
 
@@ -92,17 +93,20 @@ export default function App() {
   const activeTabId = useDiagramStore((s) => s.activeTabId)
   const activeTab = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const isViewingRevision = useDiagramStore(selectIsViewingRevision)
-  const exportRef = useRef<CanvasExportRef | null>(null)
   const [showRevisions, setShowRevisions] = useState(false)
   const [showMatrix, setShowMatrix] = useState(false)
   const [matrixWidthPct, setMatrixWidthPct] = useState(45)
+  const [showConditions, setShowConditions] = useState(false)
+  const [conditionsPct, setConditionsPct] = useState(30)
   const containerRef = useRef<HTMLDivElement>(null)
+  const flowContainerRef = useRef<HTMLDivElement>(null)
 
   const isInterfacesTab = activeTabId === INTERFACES_TAB_ID
   const isLocationsTab = activeTabId === LOCATIONS_TAB_ID
   const isTasksTab = activeTabId === TASKS_TAB_ID
   const isIOTableTab = activeTabId === IO_TABLE_TAB_ID
-  const isSpecialTab = isInterfacesTab || isLocationsTab || isTasksTab || isIOTableTab
+  const isAlarmsTab = activeTabId === ALARMS_TAB_ID
+  const isSpecialTab = isInterfacesTab || isLocationsTab || isTasksTab || isIOTableTab || isAlarmsTab
   const isFlowchart = !isSpecialTab && activeTab?.type === 'flowchart'
   const readOnly = isViewingRevision
 
@@ -114,11 +118,31 @@ export default function App() {
     setMatrixWidthPct((prev) => Math.min(75, Math.max(20, prev - deltaPct)))
   }, [])
 
+  const handleConditionsDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    let lastY = e.clientY
+    const target = e.currentTarget
+    target.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      if (!flowContainerRef.current) return
+      const totalH = flowContainerRef.current.getBoundingClientRect().height
+      if (totalH < 1) return
+      const deltaPct = ((ev.clientY - lastY) / totalH) * 100
+      lastY = ev.clientY
+      setConditionsPct((prev) => Math.min(60, Math.max(15, prev - deltaPct)))
+    }
+    const onUp = () => {
+      target.removeEventListener('pointermove', onMove)
+      target.removeEventListener('pointerup', onUp)
+    }
+    target.addEventListener('pointermove', onMove)
+    target.addEventListener('pointerup', onUp)
+  }, [])
+
   return (
     <AppErrorBoundary>
       <div className="flex flex-col h-screen bg-gray-100 overflow-hidden">
         <Toolbar
-          exportRef={exportRef}
           showRevisions={showRevisions}
           onToggleRevisions={() => setShowRevisions((v) => !v)}
         />
@@ -146,39 +170,62 @@ export default function App() {
                 <TasksPanel />
               ) : isIOTableTab ? (
                 <IOTablePanel />
+              ) : isAlarmsTab ? (
+                <AlarmsPanel />
               ) : activeTab?.type === 'sequence' ? (
                 <SequenceCanvas key={activeTab.id} readOnly={readOnly} />
               ) : (
-                <>
-                  {/* Flowchart canvas */}
-                  <div className="flex-1 overflow-hidden relative" style={showMatrix ? { flexBasis: `${100 - matrixWidthPct}%`, flexGrow: 0, flexShrink: 0 } : undefined}>
-                    <FlowchartCanvas
-                      key={activeTab?.id}
-                      exportRef={exportRef}
-                      readOnly={readOnly}
-                      showMatrix={showMatrix}
-                      onToggleMatrix={() => setShowMatrix((v) => !v)}
-                    />
+                <div ref={flowContainerRef} className="flex-1 flex flex-col overflow-hidden">
+                  {/* Flowchart + optional matrix (horizontal split) */}
+                  <div className="flex overflow-hidden" style={showConditions ? { flexBasis: `${100 - conditionsPct}%`, flexGrow: 0, flexShrink: 0 } : { flex: '1 1 0%' }}>
+                    {/* Flowchart canvas */}
+                    <div className="flex-1 overflow-hidden relative" style={showMatrix ? { flexBasis: `${100 - matrixWidthPct}%`, flexGrow: 0, flexShrink: 0 } : undefined}>
+                      <FlowchartCanvas
+                        key={activeTab?.id}
+                        readOnly={readOnly}
+                        showMatrix={showMatrix}
+                        onToggleMatrix={() => setShowMatrix((v) => !v)}
+                        showConditions={showConditions}
+                        onToggleConditions={() => setShowConditions((v) => !v)}
+                      />
+                    </div>
+
+                    {/* Resizable matrix panel */}
+                    {showMatrix && (
+                      <>
+                        <ResizeDivider onDrag={handleDividerDrag} />
+                        <div
+                          className="overflow-hidden border-l border-gray-200 bg-white flex flex-col"
+                          style={{ flexBasis: `${matrixWidthPct}%`, flexGrow: 0, flexShrink: 0 }}
+                        >
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
+                            <Grid3x3 size={12} className="text-indigo-500" />
+                            <span className="text-xs font-semibold text-indigo-700">Cause &amp; Effect — {activeTab?.name}</span>
+                          </div>
+                          <MatrixView tabId={activeTab?.id} />
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  {/* Resizable matrix panel */}
-                  {showMatrix && (
+                  {/* Conditions bottom panel */}
+                  {showConditions && (
                     <>
-                      <ResizeDivider onDrag={handleDividerDrag} />
                       <div
-                        className="overflow-hidden border-l border-gray-200 bg-white flex flex-col"
-                        style={{ flexBasis: `${matrixWidthPct}%`, flexGrow: 0, flexShrink: 0 }}
+                        className="h-1.5 cursor-row-resize flex-shrink-0 bg-gray-200 hover:bg-red-400 active:bg-red-500 transition-colors relative"
+                        onPointerDown={handleConditionsDrag}
                       >
-                        {/* Panel header */}
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
-                          <Grid3x3 size={12} className="text-indigo-500" />
-                          <span className="text-xs font-semibold text-indigo-700">Cause &amp; Effect — {activeTab?.name}</span>
-                        </div>
-                        <MatrixView tabId={activeTab?.id} />
+                        <div className="absolute inset-x-0 -top-1 -bottom-1" />
+                      </div>
+                      <div
+                        className="flex flex-col min-h-0 overflow-hidden border-t border-gray-200"
+                        style={{ flexBasis: `${conditionsPct}%`, flexGrow: 0, flexShrink: 0 }}
+                      >
+                        <ConditionsPanel />
                       </div>
                     </>
                   )}
-                </>
+                </div>
               )}
             </main>
 

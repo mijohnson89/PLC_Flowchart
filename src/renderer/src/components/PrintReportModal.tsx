@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, Printer } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import { PACKML_STATES } from '../types'
-import type { DiagramTab, UserInterface, InterfaceInstance, Plant, Area, Location, MatrixData } from '../types'
+import type { DiagramTab, UserInterface, InterfaceInstance, Plant, Area, Location, MatrixData, Task, Alarm, IORack, IOSlot, IOEntry } from '../types'
 
 // ── Shared print table styles ─────────────────────────────────────────────────
 
@@ -66,6 +66,10 @@ interface ReportOptions {
   showInterfaceLibrary: boolean
   showInstances: boolean
   showLocations: boolean
+  showIOList: boolean
+  showTasks: boolean
+  showAlarms: boolean
+  showNotes: boolean
 }
 
 // ── FlowchartSection ──────────────────────────────────────────────────────────
@@ -252,6 +256,11 @@ function FlowchartSection({
         )
       })()}
 
+      {/* Conditions */}
+      {tab.conditions.length > 0 && (
+        <ConditionsSubSection conditions={tab.conditions} />
+      )}
+
       {/* Revisions */}
       {opts.showRevisions && tab.revisions.length > 0 && (
         <div style={{ marginTop: '20px' }}>
@@ -278,6 +287,61 @@ function FlowchartSection({
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── ConditionsSubSection ─────────────────────────────────────────────────────
+
+const ACTION_COLORS: Record<string, { bg: string; color: string }> = {
+  pause: { bg: '#fef3c7', color: '#92400e' },
+  stop:  { bg: '#fee2e2', color: '#991b1b' },
+  abort: { bg: '#fce7f3', color: '#9d174d' },
+}
+
+function ConditionsSubSection({ conditions }: { conditions: import('../types').FlowCondition[] }) {
+  return (
+    <div style={{ marginTop: '20px' }}>
+      <h3 style={SUB_HEADING}>Conditions</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...TH, width: '30px' }}>#</th>
+            <th style={TH}>Condition</th>
+            <th style={{ ...TH, width: '70px', textAlign: 'center' }}>Action</th>
+            <th style={TH}>Causes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {conditions.map((cond, i) => {
+            const ac = ACTION_COLORS[cond.action] ?? { bg: '#f3f4f6', color: '#374151' }
+            return (
+              <tr key={cond.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa', verticalAlign: 'top' }}>
+                <td style={{ ...TD, textAlign: 'center', color: '#999' }}>{i + 1}</td>
+                <td style={{ ...TD, fontWeight: 'bold' }}>{cond.description}</td>
+                <td style={{ ...TD, textAlign: 'center' }}>
+                  <span style={{
+                    fontSize: '8px', padding: '1px 6px', borderRadius: '3px', fontWeight: 'bold',
+                    textTransform: 'uppercase', backgroundColor: ac.bg, color: ac.color,
+                  }}>
+                    {cond.action}
+                  </span>
+                </td>
+                <td style={TD}>
+                  {cond.causes.length === 0
+                    ? <span style={{ color: '#aaa', fontStyle: 'italic' }}>No causes</span>
+                    : cond.causes.map((c, ci) => (
+                        <div key={c.id} style={{ paddingBottom: ci < cond.causes.length - 1 ? '2px' : 0 }}>
+                          • {c.description}
+                        </div>
+                      ))
+                  }
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -356,6 +420,11 @@ function SequenceSection({ tab, opts }: { tab: DiagramTab; opts: TabReportOption
         </>
       )}
 
+      {/* Conditions */}
+      {tab.conditions.length > 0 && (
+        <ConditionsSubSection conditions={tab.conditions} />
+      )}
+
       {opts.showRevisions && tab.revisions.length > 0 && (
         <div style={{ marginTop: '20px' }}>
           <h3 style={SUB_HEADING}>Revision History</h3>
@@ -385,6 +454,271 @@ function SequenceSection({ tab, opts }: { tab: DiagramTab; opts: TabReportOption
   )
 }
 
+// ── IOListSection ────────────────────────────────────────────────────────────
+
+function IOListSection({
+  ioRacks, ioSlots, ioEntries,
+}: {
+  ioRacks: IORack[]
+  ioSlots: IOSlot[]
+  ioEntries: IOEntry[]
+}) {
+  const totalEntries = ioEntries.length
+
+  return (
+    <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
+      <h2 style={SECTION_HEADING}>IO List</h2>
+      <div style={{ fontSize: '9px', color: '#666', marginBottom: '16px' }}>
+        {ioRacks.length} rack{ioRacks.length !== 1 ? 's' : ''} · {ioSlots.length} slot{ioSlots.length !== 1 ? 's' : ''} · {totalEntries} channel{totalEntries !== 1 ? 's' : ''}
+      </div>
+
+      {ioRacks.map((rack) => {
+        const rackSlots = ioSlots.filter((s) => s.rackId === rack.id)
+        return (
+          <div key={rack.id} style={{ marginBottom: '20px' }}>
+            <div
+              style={{
+                fontSize: '12px',
+                fontWeight: 'bold',
+                backgroundColor: '#f0f0f0',
+                padding: '6px 10px',
+                borderLeft: '3px solid #4f46e5',
+                marginBottom: '8px',
+              }}
+            >
+              {rack.name}
+              <span style={{ fontSize: '9px', fontWeight: 'normal', color: '#666', marginLeft: '8px' }}>
+                {rackSlots.length} slot{rackSlots.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            {rackSlots.map((slot) => {
+              const entries = ioEntries.filter((e) => e.slotId === slot.id)
+              if (entries.length === 0) return null
+              return (
+                <div key={slot.id} style={{ marginBottom: '12px', paddingLeft: '12px', pageBreakInside: 'avoid' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 'bold', marginBottom: '4px', color: '#333' }}>
+                    {slot.name}
+                    {slot.catalogNumber && (
+                      <span style={{ fontWeight: 'normal', color: '#888', marginLeft: '6px', fontFamily: 'monospace', fontSize: '8px' }}>
+                        {slot.catalogNumber}
+                      </span>
+                    )}
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={TH}>Ch</th>
+                        <th style={TH}>Tag</th>
+                        <th style={TH}>Drawing</th>
+                        <th style={TH}>Description</th>
+                        <th style={TH}>Type</th>
+                        <th style={TH}>Unit</th>
+                        <th style={TH}>Range</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entries.map((entry, i) => {
+                        const desc = [entry.description1, entry.description2, entry.description3].filter(Boolean).join(' / ')
+                        const isAnalog = ['AI', 'AO', 'RTD', 'TC'].includes(entry.ioType)
+                        const range = isAnalog && (entry.minEUScale || entry.maxEUScale)
+                          ? `${entry.minEUScale}–${entry.maxEUScale}`
+                          : '—'
+                        return (
+                          <tr key={entry.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                            <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px', textAlign: 'center' }}>{entry.channel || '—'}</td>
+                            <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px', fontWeight: 'bold' }}>{entry.drawingTag || '—'}</td>
+                            <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{entry.drawingReference || '—'}</td>
+                            <td style={TD}>{desc || '—'}</td>
+                            <td style={TD}>
+                              {entry.ioType ? (
+                                <span style={{
+                                  fontSize: '8px', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold',
+                                  backgroundColor: isAnalog ? '#dbeafe' : '#d1fae5',
+                                  color: isAnalog ? '#1e40af' : '#065f46',
+                                }}>{entry.ioType}</span>
+                              ) : '—'}
+                            </td>
+                            <td style={{ ...TD, fontSize: '8px' }}>{entry.unitOfMeasure || '—'}</td>
+                            <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{range}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── TasksSection ─────────────────────────────────────────────────────────────
+
+function TasksSection({ tasks }: { tasks: Task[] }) {
+  const totalSubTasks = tasks.reduce((sum, t) => sum + t.subTasks.length, 0)
+  const completedSubTasks = tasks.reduce(
+    (sum, t) => sum + t.subTasks.filter((s) => s.designed && s.programmed && s.tested).length,
+    0
+  )
+
+  return (
+    <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
+      <h2 style={SECTION_HEADING}>Tasks</h2>
+      <div style={{ fontSize: '9px', color: '#666', marginBottom: '16px' }}>
+        {tasks.length} task group{tasks.length !== 1 ? 's' : ''} · {totalSubTasks} test{totalSubTasks !== 1 ? 's' : ''} · {completedSubTasks} completed
+      </div>
+
+      {tasks.map((task) => (
+        <div key={task.id} style={{ marginBottom: '16px', pageBreakInside: 'avoid' }}>
+          <div
+            style={{
+              fontSize: '11px',
+              fontWeight: 'bold',
+              backgroundColor: '#f0f0f0',
+              padding: '5px 10px',
+              borderLeft: '3px solid #4f46e5',
+              marginBottom: '4px',
+            }}
+          >
+            {task.name}
+            <span style={{ fontSize: '9px', fontWeight: 'normal', color: '#666', marginLeft: '8px' }}>
+              {task.subTasks.length} test{task.subTasks.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {task.subTasks.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...TH, width: '40%' }}>Test</th>
+                  <th style={{ ...TH, width: '20%', textAlign: 'center' }}>Designed</th>
+                  <th style={{ ...TH, width: '20%', textAlign: 'center' }}>Programmed</th>
+                  <th style={{ ...TH, width: '20%', textAlign: 'center' }}>Tested</th>
+                </tr>
+              </thead>
+              <tbody>
+                {task.subTasks.map((st, i) => {
+                  const done = st.designed && st.programmed && st.tested
+                  return (
+                    <tr key={st.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                      <td style={{ ...TD, textDecoration: done ? 'line-through' : 'none', color: done ? '#999' : '#111' }}>
+                        {st.name}
+                      </td>
+                      <td style={{ ...TD, textAlign: 'center', color: st.designed ? '#166534' : '#dc2626' }}>
+                        {st.designed ? '✓' : '—'}
+                      </td>
+                      <td style={{ ...TD, textAlign: 'center', color: st.programmed ? '#166534' : '#dc2626' }}>
+                        {st.programmed ? '✓' : '—'}
+                      </td>
+                      <td style={{ ...TD, textAlign: 'center', color: st.tested ? '#166534' : '#dc2626' }}>
+                        {st.tested ? '✓' : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── AlarmsSection ────────────────────────────────────────────────────────────
+
+function AlarmsSection({
+  alarms,
+  userInterfaces,
+  interfaceInstances,
+}: {
+  alarms: Alarm[]
+  userInterfaces: UserInterface[]
+  interfaceInstances: InterfaceInstance[]
+}) {
+  const rows: { key: string; type: string; message: string; source: string; field: string }[] = []
+
+  for (const alarm of alarms) {
+    rows.push({ key: `s-${alarm.id}`, type: 'Once-off', message: alarm.description, source: '—', field: '—' })
+  }
+
+  for (const iface of userInterfaces) {
+    for (const field of iface.fields) {
+      if (!field.isAlarm) continue
+      const msg = field.alarmMessage || field.name
+      const instances = interfaceInstances.filter((inst) => inst.interfaceId === iface.id)
+      if (instances.length === 0) {
+        rows.push({
+          key: `f-${iface.id}-${field.id}-none`,
+          type: 'Per-instance',
+          message: msg,
+          source: `${iface.type}: ${iface.name}`,
+          field: field.name,
+        })
+      } else {
+        for (const inst of instances) {
+          rows.push({
+            key: `f-${iface.id}-${field.id}-${inst.id}`,
+            type: 'Per-instance',
+            message: `${inst.name} ${msg}`,
+            source: `${iface.type}: ${iface.name}`,
+            field: field.name,
+          })
+        }
+      }
+    }
+  }
+
+  if (rows.length === 0) return null
+
+  return (
+    <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
+      <h2 style={SECTION_HEADING}>Alarms</h2>
+      <div style={{ fontSize: '9px', color: '#666', marginBottom: '16px' }}>
+        {rows.length} alarm{rows.length !== 1 ? 's' : ''} — {alarms.length} once-off · {rows.length - alarms.length} per-instance
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...TH, width: '30px' }}>#</th>
+            <th style={TH}>Type</th>
+            <th style={TH}>Alarm Message</th>
+            <th style={TH}>Source</th>
+            <th style={TH}>Field</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={row.key} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+              <td style={{ ...TD, textAlign: 'center', color: '#999' }}>{i + 1}</td>
+              <td style={TD}>
+                <span style={{
+                  fontSize: '8px',
+                  padding: '1px 5px',
+                  borderRadius: '3px',
+                  fontWeight: 'bold',
+                  backgroundColor: row.type === 'Once-off' ? '#fef3c7' : '#e0e7ff',
+                  color: row.type === 'Once-off' ? '#92400e' : '#3730a3',
+                }}>
+                  {row.type}
+                </span>
+              </td>
+              <td style={{ ...TD, fontWeight: 'bold' }}>{row.message}</td>
+              <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{row.source}</td>
+              <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{row.field}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Full report document (rendered into the print portal) ─────────────────────
 
 function ReportDocument({ options }: { options: ReportOptions }) {
@@ -397,6 +731,12 @@ function ReportDocument({ options }: { options: ReportOptions }) {
     userInterfaces,
     interfaceInstances,
     matrixData,
+    ioRacks,
+    ioSlots,
+    ioEntries,
+    tasks,
+    taskNotes,
+    alarms,
   } = useDiagramStore()
 
   const flowchartTabs = tabs.filter((t) => t.type === 'flowchart')
@@ -594,7 +934,6 @@ function ReportDocument({ options }: { options: ReportOptions }) {
                       <th style={TH}>Field Name</th>
                       <th style={TH}>Data Type</th>
                       {iface.type === 'AOI' && <th style={TH}>Usage</th>}
-                      <th style={TH}>Default Value</th>
                       <th style={TH}>Description</th>
                     </tr>
                   </thead>
@@ -608,9 +947,6 @@ function ReportDocument({ options }: { options: ReportOptions }) {
                         {iface.type === 'AOI' && (
                           <td style={TD}>{f.usage ?? '—'}</td>
                         )}
-                        <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>
-                          {f.defaultValue || '—'}
-                        </td>
                         <td style={TD}>{f.description || '—'}</td>
                       </tr>
                     ))}
@@ -781,6 +1117,32 @@ function ReportDocument({ options }: { options: ReportOptions }) {
           })}
         </div>
       )}
+
+      {/* ── IO List ── */}
+      {options.showIOList && ioEntries.length > 0 && (
+        <IOListSection ioRacks={ioRacks} ioSlots={ioSlots} ioEntries={ioEntries} />
+      )}
+
+      {/* ── Tasks ── */}
+      {options.showTasks && tasks.length > 0 && (
+        <TasksSection tasks={tasks} />
+      )}
+
+      {/* ── Alarms ── */}
+      {options.showAlarms && (
+        <AlarmsSection alarms={alarms} userInterfaces={userInterfaces} interfaceInstances={interfaceInstances} />
+      )}
+
+      {/* ── Notes ── */}
+      {options.showNotes && taskNotes && taskNotes.trim() !== '' && (
+        <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
+          <h2 style={SECTION_HEADING}>Notes</h2>
+          <div
+            style={{ fontSize: '10px', lineHeight: '1.6' }}
+            dangerouslySetInnerHTML={{ __html: taskNotes }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -792,7 +1154,7 @@ interface Props {
 }
 
 export function PrintReportModal({ onClose }: Props) {
-  const { projectName, tabs, userInterfaces, interfaceInstances, plants } = useDiagramStore()
+  const { projectName, tabs, userInterfaces, interfaceInstances, plants, ioRacks, ioSlots, ioEntries, tasks, alarms, taskNotes } = useDiagramStore()
 
   const flowchartTabs = tabs.filter((t) => t.type === 'flowchart')
   const sequenceTabs = tabs.filter((t) => t.type === 'sequence')
@@ -813,6 +1175,10 @@ export function PrintReportModal({ onClose }: Props) {
       showInterfaceLibrary: true,
       showInstances: true,
       showLocations: true,
+      showIOList: true,
+      showTasks: true,
+      showAlarms: true,
+      showNotes: true,
     }
   })
 
@@ -826,17 +1192,11 @@ export function PrintReportModal({ onClose }: Props) {
     }))
   }
 
-  function handlePrint() {
+  async function handlePrint() {
     const reportEl = document.getElementById('__plc_report__')
     if (!reportEl) return
 
-    // Open a clean popup containing only the report HTML, then print from it.
-    // This is the most reliable approach in Chromium — no @media print tricks,
-    // no page-break suppression from overflow:hidden ancestors.
-    const win = window.open('', '_blank', 'width=1000,height=800')
-    if (!win) return
-
-    win.document.write(`<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -845,22 +1205,15 @@ export function PrintReportModal({ onClose }: Props) {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #111; }
     @page { margin: 15mm; size: A4 portrait; }
-    @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    }
   </style>
 </head>
 <body>
   ${reportEl.innerHTML}
 </body>
-</html>`)
-    win.document.close()
-    // Give the browser a tick to finish layout before showing the print dialog
-    setTimeout(() => {
-      win.focus()
-      win.print()
-      win.close()
-    }, 250)
+</html>`
+
+    const result = await window.api.printReport(html, `${projectName} Report.pdf`)
+    if (result.success) onClose()
   }
 
   // Render the report off-screen (no display:none, no overflow:hidden — both
@@ -999,6 +1352,30 @@ export function PrintReportModal({ onClose }: Props) {
                 onChange={(v) => setOptions((p) => ({ ...p, showLocations: v }))}
                 label="Locations"
                 hint={`${plants.length} plant${plants.length !== 1 ? 's' : ''} — Plant › Area › Location hierarchy`}
+              />
+              <CheckRow
+                checked={options.showIOList}
+                onChange={(v) => setOptions((p) => ({ ...p, showIOList: v }))}
+                label="IO List"
+                hint={`${ioEntries.length} channel${ioEntries.length !== 1 ? 's' : ''} across ${ioRacks.length} rack${ioRacks.length !== 1 ? 's' : ''} and ${ioSlots.length} slot${ioSlots.length !== 1 ? 's' : ''}`}
+              />
+              <CheckRow
+                checked={options.showTasks}
+                onChange={(v) => setOptions((p) => ({ ...p, showTasks: v }))}
+                label="Tasks & Tests"
+                hint={`${tasks.length} task group${tasks.length !== 1 ? 's' : ''} with designed / programmed / tested status`}
+              />
+              <CheckRow
+                checked={options.showAlarms}
+                onChange={(v) => setOptions((p) => ({ ...p, showAlarms: v }))}
+                label="Alarms"
+                hint={`${alarms.length} once-off alarm${alarms.length !== 1 ? 's' : ''} + per-instance alarms from interfaces`}
+              />
+              <CheckRow
+                checked={options.showNotes}
+                onChange={(v) => setOptions((p) => ({ ...p, showNotes: v }))}
+                label="Notes"
+                hint={taskNotes ? 'Rich text notes attached to the project' : 'No notes written yet'}
               />
             </OptionGroup>
 

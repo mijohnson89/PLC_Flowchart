@@ -1,19 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, FolderOpen, Save, Download, Undo2, Redo2, Network, ChevronDown, Pencil, History, BookOpen } from 'lucide-react'
+import { FileText, FolderOpen, Save, Undo2, Redo2, Network, Pencil, History, BookOpen } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import { PrintReportModal } from './PrintReportModal'
 
 interface ToolbarProps {
-  exportRef: React.MutableRefObject<{
-    exportPng: () => Promise<void>
-    exportSvg: () => Promise<void>
-    exportPdf?: () => Promise<void>
-  } | null>
   showRevisions: boolean
   onToggleRevisions: () => void
 }
 
-export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: ToolbarProps) {
+export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
   const {
     projectName, isDirty,
     setProjectName,
@@ -22,31 +17,8 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
 
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(projectName)
-  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [showPrintReport, setShowPrintReport] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
-
-  function handlePrintPdf() {
-    const state    = useDiagramStore.getState()
-    const tab      = state.tabs.find((t) => t.id === state.activeTabId)
-    const pageSize = tab?.pageSize
-    const orient   = tab?.pageOrientation ?? 'portrait'
-
-    // Inject a temporary @page rule so the OS print dialog defaults to the
-    // correct paper size and orientation. Removed after the dialog closes.
-    let injected: HTMLStyleElement | null = null
-    if (pageSize) {
-      injected = document.createElement('style')
-      injected.dataset.printPageRule = 'true'
-      injected.textContent = `@page { size: ${pageSize.toLowerCase()} ${orient}; margin: 0; }`
-      document.head.appendChild(injected)
-    }
-
-    window.print()
-
-    // Clean up after a short delay — print() returns before the user finishes.
-    setTimeout(() => injected?.remove(), 3000)
-  }
 
   useEffect(() => { setNameValue(projectName) }, [projectName])
 
@@ -56,10 +28,6 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
       window.api.onMenu('menu-open', handleOpen),
       window.api.onMenu('menu-save', handleSave),
       window.api.onMenu('menu-save-as', handleSaveAs),
-      window.api.onMenu('menu-export-png', () => exportRef.current?.exportPng()),
-      window.api.onMenu('menu-export-svg', () => exportRef.current?.exportSvg()),
-      window.api.onMenu('menu-export-pdf', () => exportRef.current?.exportPdf?.()),
-      window.api.onMenu('menu-print-pdf',  handlePrintPdf),
       window.api.onMenu('menu-print-report', () => setShowPrintReport(true)),
       window.api.onMenu('menu-undo', () => useDiagramStore.getState().undo()),
       window.api.onMenu('menu-redo', () => useDiagramStore.getState().redo())
@@ -127,46 +95,15 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
 
       <div className="w-px h-5 bg-gray-200 mx-1" />
 
-      {/* Export */}
-      <div className="relative">
-        <button
-          onClick={() => setExportMenuOpen((p) => !p)}
-          className="toolbar-btn flex items-center gap-1"
-          title="Export diagram"
-        >
-          <Download size={15} />
-          <ChevronDown size={11} />
-        </button>
-        {exportMenuOpen && (
-          <div className="absolute top-full left-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
-            <button className="w-full text-left text-xs px-3 py-2 hover:bg-gray-50 text-gray-700"
-              onClick={() => { exportRef.current?.exportPng(); setExportMenuOpen(false) }}>
-              Export as PNG
-            </button>
-            <button className="w-full text-left text-xs px-3 py-2 hover:bg-gray-50 text-gray-700"
-              onClick={() => { exportRef.current?.exportSvg(); setExportMenuOpen(false) }}>
-              Export as SVG
-            </button>
-            <div className="h-px bg-gray-100 my-1" />
-            <button className="w-full text-left text-xs px-3 py-2 hover:bg-indigo-50 text-indigo-700 font-medium flex items-center justify-between"
-              onClick={() => { exportRef.current?.exportPdf?.(); setExportMenuOpen(false) }}>
-              <span>Export as PDF</span>
-              <span className="text-[9px] text-indigo-400 font-normal">page size</span>
-            </button>
-            <button className="w-full text-left text-xs px-3 py-2 hover:bg-gray-50 text-gray-700 flex items-center justify-between"
-              onClick={() => { handlePrintPdf(); setExportMenuOpen(false) }}>
-              <span>Print to PDF…</span>
-              <span className="text-[9px] text-gray-400 font-normal">Ctrl+P</span>
-            </button>
-            <div className="h-px bg-gray-100 my-1" />
-            <button className="w-full text-left text-xs px-3 py-2 hover:bg-indigo-50 text-indigo-700 font-medium flex items-center gap-2"
-              onClick={() => { setShowPrintReport(true); setExportMenuOpen(false) }}>
-              <BookOpen size={13} />
-              <span>Print Report…</span>
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Print Report */}
+      <button
+        onClick={() => setShowPrintReport(true)}
+        title="Print Report (Ctrl+Shift+P)"
+        className="toolbar-btn flex items-center gap-1.5"
+      >
+        <BookOpen size={15} />
+        <span className="text-xs hidden sm:block">Print Report</span>
+      </button>
 
       <div className="w-px h-5 bg-gray-200 mx-1" />
 
