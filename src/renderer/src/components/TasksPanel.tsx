@@ -5,7 +5,7 @@ import {
   ClipboardList, CheckSquare, Square,
   Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
   Heading1, Heading2, Strikethrough, StickyNote, Minus,
-  Zap, Server, Cpu, Tag, ExternalLink
+  Zap, Server, Cpu, Tag, ExternalLink, EyeOff, Eye
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { Task, SubTask, TaskAutoGenSettings } from '../types'
@@ -487,6 +487,12 @@ function SubTaskRow({ sub, taskId }: { sub: SubTask; taskId: string }) {
   )
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function isTaskComplete(task: Task): boolean {
+  return task.subTasks.length > 0 && task.subTasks.every((st) => st.designed && st.programmed && st.tested)
+}
+
 // ── Task card ────────────────────────────────────────────────────────────────
 
 function TaskCard({ task }: { task: Task }) {
@@ -509,10 +515,12 @@ function TaskCard({ task }: { task: Task }) {
     }
   }
 
+  const complete = isTaskComplete(task)
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className={`rounded-xl border shadow-sm overflow-hidden ${complete ? 'bg-emerald-50/40 border-emerald-200' : 'bg-white border-gray-200'}`}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50/60">
+      <div className={`flex items-center gap-2 px-3 py-2.5 ${complete ? 'bg-emerald-50/60' : 'bg-gray-50/60'}`}>
         <button onClick={() => setExpanded((v) => !v)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </button>
@@ -527,7 +535,7 @@ function TaskCard({ task }: { task: Task }) {
           ) : (
             <h3
               onDoubleClick={() => setEditingName(true)}
-              className="text-sm font-semibold text-gray-800 truncate cursor-default"
+              className={`text-sm font-semibold truncate cursor-default ${complete ? 'line-through text-gray-400' : 'text-gray-800'}`}
               title="Double-click to rename"
             >
               {task.name}
@@ -850,9 +858,13 @@ export function TasksPanel() {
   const addRef = useRef<HTMLInputElement>(null)
   const [notesPct, setNotesPct] = useState(35)
   const [showAutoGen, setShowAutoGen] = useState(false)
+  const [hideCompleted, setHideCompleted] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const autoGen = useDiagramStore((s) => s.taskAutoGen)
   const anyAutoGenOn = autoGen.ioCardFAT || autoGen.analogSAT || autoGen.sequenceTesting || autoGen.deviceTesting
+
+  const completedCount = tasks.filter(isTaskComplete).length
+  const visibleTasks = hideCompleted ? tasks.filter((t) => !isTaskComplete(t)) : tasks
 
   useEffect(() => {
     if (adding) addRef.current?.focus()
@@ -899,6 +911,20 @@ export function TasksPanel() {
           <Stats tasks={tasks} />
         </div>
         <div className="relative flex items-center gap-2">
+          {completedCount > 0 && (
+            <button
+              onClick={() => setHideCompleted((v) => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                hideCompleted
+                  ? 'bg-gray-100 text-gray-600 border-gray-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+              }`}
+              title={hideCompleted ? 'Show completed tasks' : 'Hide completed tasks'}
+            >
+              {hideCompleted ? <Eye size={12} /> : <EyeOff size={12} />}
+              {hideCompleted ? `Show ${completedCount}` : 'Hide done'}
+            </button>
+          )}
           <button
             onClick={() => setShowAutoGen((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
@@ -970,9 +996,15 @@ export function TasksPanel() {
           </div>
         )}
 
-        {tasks.map((task) => (
+        {visibleTasks.map((task) => (
           <TaskCard key={task.id} task={task} />
         ))}
+
+        {hideCompleted && completedCount > 0 && visibleTasks.length > 0 && (
+          <p className="text-center text-[11px] text-gray-400 py-2">
+            {completedCount} completed task{completedCount !== 1 ? 's' : ''} hidden
+          </p>
+        )}
       </div>
 
       {/* Resize divider */}
