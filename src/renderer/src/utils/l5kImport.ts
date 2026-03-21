@@ -1,10 +1,6 @@
 import { MarkerType } from '@xyflow/react'
 import type { AOIFieldUsage, InterfaceField, UserInterface, PLCNode, PLCEdge } from '../types'
-
-let _importId = 1
-function uid(prefix: string): string {
-  return `${prefix}_${Date.now()}_${_importId++}`
-}
+import { uid } from './uid'
 
 function parseDescription(attrs: string): string | undefined {
   const m = attrs.match(/Description\s*:=\s*"([^"]*)"/i)
@@ -31,7 +27,8 @@ function parseUdtField(line: string): InterfaceField | null {
       id: uid('field'),
       name: bitMatch[1],
       dataType: 'BOOL',
-      description: parseDescription(line)
+      description: parseDescription(line),
+      includeInMatrix: false
     }
   }
 
@@ -46,7 +43,8 @@ function parseUdtField(line: string): InterfaceField | null {
     id: uid('field'),
     name: fieldName,
     dataType: `${baseType}${suffix}`,
-    description: parseDescription(line)
+    description: parseDescription(line),
+    includeInMatrix: false
   }
 }
 
@@ -63,7 +61,8 @@ function parseAoiParameter(statement: string): InterfaceField | null {
     dataType,
     usage: parseUsage(attrs),
     description: parseDescription(attrs),
-    defaultValue: parseDefaultValue(attrs)
+    defaultValue: parseDefaultValue(attrs),
+    includeInMatrix: false
   }
 }
 
@@ -157,7 +156,9 @@ export interface L5KStepTransition {
 
 export interface L5KSequence {
   programName: string
+  rawProgramName: string     // original program name before display transformation
   sequenceTagName: string
+  taskName?: string
   steps: Array<{
     stepNumber: number
     label?: string
@@ -180,10 +181,38 @@ function extractCondition(expr: string): string | undefined {
   return undefined
 }
 
-export function parseL5KSequences(text: string): L5KSequence[] {
+export function parseL5KTasks(text: string): Map<string, string> {
+  const lines = text.split(/\r?\n/)
+  const map = new Map<string, string>()
+  let i = 0
+
+  while (i < lines.length) {
+    const taskMatch = lines[i].match(/^\s*TASK\s+([A-Za-z_][\w]*)\s*\(/i)
+    if (taskMatch) {
+      const taskName = taskMatch[1]
+      i++
+      while (i < lines.length && !/^\s*END_TASK/i.test(lines[i])) {
+        const progRef = lines[i].match(/^\s*([A-Za-z_][\w]*)\s*;/)
+        if (progRef) {
+          map.set(progRef[1], taskName)
+        }
+        i++
+      }
+    }
+    i++
+  }
+
+  return map
+}
+
+export function parseL5KSequences(text: string, taskMap?: Map<string, string>): L5KSequence[] {
   const lines = text.split(/\r?\n/)
   const result: L5KSequence[] = []
   let i = 0
+
+  // Matches both Step_Current/Step_Next (newer) and Step_Index/Step_Buffer (older)
+  const STEP_READ_FIELD  = '(?:Step_Current|Step_Index)'
+  const STEP_WRITE_FIELD = '(?:Step_Next|Step_Buffer|Step_Index|Step_Current)'
 
   while (i < lines.length) {
     const progMatch = lines[i].match(/^\s*PROGRAM\s+([A-Za-z_][\w]*)\s*\(/i)
@@ -193,45 +222,50 @@ export function parseL5KSequences(text: string): L5KSequence[] {
     }
 
     const programName = progMatch[1]
-    let sequenceTagName = 'Sequence'
-    let steps: L5KSequence['steps'] = []
+    // Per-tag step map: tagName → (stepNumber → { label, transitions })
+    const tagStepMaps = new Map<string, Map<number, { label?: string; transitions: L5KStepTransition[] }>>()
+    // Track preferred routines per tag to allow overriding
+    const tagHasPreferred = new Set<string>()
     i++
 
     while (i < lines.length && !/^\s*END_PROGRAM/i.test(lines[i])) {
-      // TAG block: find AOI_Sequence instance
-      const tagMatch = lines[i].match(/^\s*([A-Za-z_][\w]*)\s*:\s*AOI_Sequence\s+/i)
-      if (tagMatch) {
-        sequenceTagName = tagMatch[1]
-      }
-
-      // ROUTINE block: look for _0100_2_Sequence_Steps or routine with Step_Next
+      // ROUTINE block
       const routineMatch = lines[i].match(/^\s*ROUTINE\s+([A-Za-z_][\w]*)\s*$/i)
       if (routineMatch) {
         const routineName = routineMatch[1]
-        const isPreferredStepRoutine = /_0100_2|Sequence_Steps/i.test(routineName)
+        const isPreferred = /_0100_2|Sequence_Steps/i.test(routineName)
         i++
         let lastRc = ''
-        const stepMap = new Map<number, { label?: string; transitions: L5KStepTransition[] }>()
+
+        // Temporary per-tag maps for this routine
+        const routineStepMaps = new Map<string, Map<number, { label?: string; transitions: L5KStepTransition[] }>>()
 
         while (i < lines.length && !/^\s*END_ROUTINE/i.test(lines[i])) {
           const line = lines[i]
           const rc = parseRcComment(line)
           if (rc) lastRc = rc
 
-          if (/Step_Current|Step_Next/.test(line)) {
-            const tagEsc = sequenceTagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            const eqRe = new RegExp(`EQU\\(${tagEsc}\\.Step_Current\\s*,\\s*(\\d+)\\)`, 'i')
-            const movRe = new RegExp(`MOV\\(\\s*(\\d+)\\s*,\\s*${tagEsc}\\.Step_Next\\s*\\)`, 'gi')
-            const clrRe = new RegExp(`CLR\\(\\s*${tagEsc}\\.Step_Next\\s*\\)`, 'gi')
-
+          if (/Step_Current|Step_Next|Step_Index|Step_Buffer/.test(line)) {
+            // Generic regex: extract the tag name dynamically from the EQU pattern
+            const eqRe = new RegExp(`EQU\\(([A-Za-z_]\\w*)\\.${STEP_READ_FIELD}\\s*,\\s*(\\d+)\\)`, 'i')
             const eqMatch = line.match(eqRe)
             if (eqMatch) {
-              const fromStep = parseInt(eqMatch[1], 10)
+              const tagName = eqMatch[1]
+              const fromStep = parseInt(eqMatch[2], 10)
+
+              if (!routineStepMaps.has(tagName)) {
+                routineStepMaps.set(tagName, new Map())
+              }
+              const stepMap = routineStepMaps.get(tagName)!
               if (!stepMap.has(fromStep)) {
                 stepMap.set(fromStep, { transitions: [] })
               }
               const entry = stepMap.get(fromStep)!
               if (lastRc) entry.label = lastRc
+
+              const tagEsc = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+              const movRe = new RegExp(`MOV\\(\\s*(\\d+)\\s*,\\s*${tagEsc}\\.${STEP_WRITE_FIELD}\\s*\\)`, 'gi')
+              const clrRe = new RegExp(`CLR\\(\\s*${tagEsc}\\.${STEP_WRITE_FIELD}\\s*\\)`, 'gi')
 
               const toSteps: number[] = []
               let m
@@ -255,14 +289,24 @@ export function parseL5KSequences(text: string): L5KSequence[] {
           i++
         }
 
-        if (stepMap.size > 0 && (steps.length === 0 || isPreferredStepRoutine)) {
-          steps = Array.from(stepMap.entries())
-            .sort((a, b) => a[0] - b[0])
-            .map(([stepNumber, data]) => ({
-              stepNumber,
-              label: data.label,
-              transitions: data.transitions
-            }))
+        // Merge this routine's results into the program-level maps
+        for (const [tagName, stepMap] of routineStepMaps) {
+          if (stepMap.size === 0) continue
+
+          const shouldReplace = isPreferred && !tagHasPreferred.has(tagName)
+          if (shouldReplace) tagHasPreferred.add(tagName)
+
+          if (!tagStepMaps.has(tagName) || shouldReplace) {
+            tagStepMaps.set(tagName, stepMap)
+          } else {
+            // Merge: add any new steps (don't overwrite existing)
+            const existing = tagStepMaps.get(tagName)!
+            for (const [stepNum, data] of stepMap) {
+              if (!existing.has(stepNum)) {
+                existing.set(stepNum, data)
+              }
+            }
+          }
         }
         continue
       }
@@ -270,8 +314,19 @@ export function parseL5KSequences(text: string): L5KSequence[] {
       i++
     }
 
-    if (steps.length > 0) {
-      result.push({ programName, sequenceTagName, steps })
+    // Create one L5KSequence per tag that has steps
+    const tagsWithSteps = [...tagStepMaps.entries()].filter(([, sm]) => sm.size > 0)
+    for (const [tagName, stepMap] of tagsWithSteps) {
+      const steps = Array.from(stepMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([stepNumber, data]) => ({
+          stepNumber,
+          label: data.label,
+          transitions: data.transitions
+        }))
+
+      const displayName = tagsWithSteps.length > 1 ? `${programName} — ${tagName}` : programName
+      result.push({ programName: displayName, rawProgramName: programName, sequenceTagName: tagName, taskName: taskMap?.get(programName), steps })
     }
     i++
   }
@@ -395,4 +450,73 @@ export function l5kSequenceToFlowchart(seq: L5KSequence): { nodes: PLCNode[]; ed
   }
 
   return { nodes, edges }
+}
+
+// ── L5K Controller name ────────────────────────────────────────────────────────
+
+export function parseL5KControllerName(text: string): string | undefined {
+  const m = text.match(/^\s*CONTROLLER\s+([A-Za-z_][\w]*)\s*\(/im)
+  return m?.[1]
+}
+
+// ── L5K Program Tag extraction ─────────────────────────────────────────────────
+
+export interface L5KProgramTag {
+  tagName: string
+  dataType: string
+  description?: string
+  programName: string | null
+}
+
+export function parseL5KProgramTags(text: string): L5KProgramTag[] {
+  const lines = text.split(/\r?\n/)
+  const tags: L5KProgramTag[] = []
+  let i = 0
+  let currentProgram: string | null = null
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    const progStart = line.match(/^\s*PROGRAM\s+([A-Za-z_][\w]*)\s*\(/i)
+    if (progStart) {
+      currentProgram = progStart[1]
+      i++
+      continue
+    }
+
+    if (/^\s*END_PROGRAM/i.test(line)) {
+      currentProgram = null
+      i++
+      continue
+    }
+
+    if (/^\s*TAG\s*$/i.test(line)) {
+      i++
+      let stmt = ''
+      while (i < lines.length && !/^\s*END_TAG/i.test(lines[i])) {
+        stmt += lines[i] + ' '
+        if (lines[i].includes(';')) {
+          const tagMatch = stmt.match(
+            /^\s*([A-Za-z_][\w]*)\s*:\s*([A-Za-z_][\w]*(?:\[[^\]]+\])?)/
+          )
+          if (tagMatch) {
+            tags.push({
+              tagName: tagMatch[1],
+              dataType: tagMatch[2].replace(/\[.*\]$/, ''),
+              description: parseDescription(stmt),
+              programName: currentProgram
+            })
+          }
+          stmt = ''
+        }
+        i++
+      }
+      i++
+      continue
+    }
+
+    i++
+  }
+
+  return tags
 }

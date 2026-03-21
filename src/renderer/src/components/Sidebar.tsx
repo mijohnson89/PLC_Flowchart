@@ -19,14 +19,6 @@ const PALETTE: PaletteItem[] = [
     icon: '▣',
     bgColor: '#d1fae5',
     borderColor: '#10b981'
-  },
-  {
-    type: 'decision',
-    label: 'Decision',
-    description: 'Branching logic / if-else',
-    icon: '◈',
-    bgColor: '#fef9c3',
-    borderColor: '#ca8a04'
   }
 ]
 
@@ -42,7 +34,7 @@ export function Sidebar() {
 
   if (mode === 'sequence') {
     return (
-      <aside className="w-56 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+      <aside className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100">
           <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Sequence Elements</h2>
         </div>
@@ -69,7 +61,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-56 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
+    <aside className="flex flex-col overflow-hidden flex-shrink-0">
       <div className="px-4 py-3 border-b border-gray-100">
         <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Node Palette</h2>
         <p className="text-[10px] text-gray-400 mt-0.5">

@@ -15,9 +15,9 @@ interface ToolbarProps {
 
 export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: ToolbarProps) {
   const {
-    projectName, isDirty, currentFilePath,
-    setProjectName, setCurrentFilePath,
-    undo, redo, newProject, loadProject, toProject
+    projectName, isDirty,
+    setProjectName,
+    undo, redo
   } = useDiagramStore()
 
   const [editingName, setEditingName] = useState(false)
@@ -61,36 +61,39 @@ export function Toolbar({ exportRef, showRevisions, onToggleRevisions }: Toolbar
       window.api.onMenu('menu-export-pdf', () => exportRef.current?.exportPdf?.()),
       window.api.onMenu('menu-print-pdf',  handlePrintPdf),
       window.api.onMenu('menu-print-report', () => setShowPrintReport(true)),
-      window.api.onMenu('menu-undo', undo),
-      window.api.onMenu('menu-redo', redo)
+      window.api.onMenu('menu-undo', () => useDiagramStore.getState().undo()),
+      window.api.onMenu('menu-redo', () => useDiagramStore.getState().redo())
     ]
     return () => removers.forEach((r) => r())
-  }, [currentFilePath]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleNew() {
-    if (isDirty && !confirm('Unsaved changes will be lost. Continue?')) return
-    newProject()
+  function handleNew() {
+    useDiagramStore.getState().newProject()
+    window.location.reload()
   }
 
   async function handleOpen() {
     const result = await window.api.openFile()
     if (result.success && result.content && result.filePath) {
-      loadProject(result.content, result.filePath)
+      useDiagramStore.getState().loadProject(result.content, result.filePath)
     }
   }
 
   async function handleSave() {
-    if (currentFilePath) {
-      await window.api.saveFile(toProject(), projectName)
+    const s = useDiagramStore.getState()
+    if (s.currentFilePath) {
+      await window.api.saveFile(s.toProject(), s.projectName)
+      useDiagramStore.setState({ isDirty: false })
     } else {
       await handleSaveAs()
     }
   }
 
   async function handleSaveAs() {
-    const result = await window.api.saveFile(toProject(), `${projectName}.plcd`)
+    const s = useDiagramStore.getState()
+    const result = await window.api.saveFile(s.toProject(), `${s.projectName}.plcd`)
     if (result.success && result.filePath) {
-      setCurrentFilePath(result.filePath)
+      s.setCurrentFilePath(result.filePath)
       useDiagramStore.setState({ isDirty: false })
     }
   }

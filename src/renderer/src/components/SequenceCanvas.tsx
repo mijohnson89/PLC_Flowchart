@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { Plus, Trash2, ArrowRight, ChevronUp, ChevronDown, Edit2, Check, X, Lock } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { SequenceActor, SequenceMessage, MessageType } from '../types'
@@ -36,7 +36,7 @@ export function SequenceCanvas({ readOnly = false }: { readOnly?: boolean }) {
   const [edit, setEdit] = useState<EditState | null>(null)
   const [addMsgOpen, setAddMsgOpen] = useState(false)
   const [newMsg, setNewMsg] = useState<Partial<SequenceMessage>>({ type: 'sync' })
-  const svgRef = useRef<SVGSVGElement>(null)
+
 
   const canvasWidth = Math.max(600, seqActors.length * (ACTOR_WIDTH + ACTOR_GAP) + CANVAS_PAD * 2)
   const canvasHeight = LIFELINE_TOP + 60 + seqMessages.length * MSG_HEIGHT + 60
@@ -161,7 +161,7 @@ export function SequenceCanvas({ readOnly = false }: { readOnly?: boolean }) {
           </div>
         ) : (
           <svg
-            ref={svgRef}
+
             width={canvasWidth}
             height={canvasHeight}
             className="bg-white rounded-lg shadow-sm border border-gray-200 block mx-auto"

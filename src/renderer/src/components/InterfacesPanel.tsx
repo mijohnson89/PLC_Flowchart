@@ -12,12 +12,11 @@ import type {
 } from '../types'
 import { MatrixView } from './MatrixView'
 import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
-import { parseL5KInterfaces, parseL5KSequences, l5kSequenceToFlowchart } from '../utils/l5kImport'
+import { parseL5KInterfaces, parseL5KSequences, parseL5KTasks, l5kSequenceToFlowchart, parseL5KControllerName, parseL5KProgramTags } from '../utils/l5kImport'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-let _id = 1
-function uid(prefix = 'iface') { return `${prefix}_${Date.now()}_${_id++}` }
+import { uid } from '../utils/uid'
 
 const DATA_TYPES = [
   'BOOL', 'SINT', 'INT', 'DINT', 'LINT',
@@ -39,6 +38,11 @@ const USAGE_COLOR: Record<AOIFieldUsage, string> = {
 
 // ── Field row ─────────────────────────────────────────────────────────────────
 
+function defaultIncludeInMatrix(field: InterfaceField, isAOI: boolean): boolean {
+  if (isAOI) return field.usage === 'Input' || field.usage === 'InOut'
+  return true
+}
+
 function FieldRow({
   field,
   isAOI,
@@ -53,12 +57,15 @@ function FieldRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(field)
 
+  const effectiveInclude = field.includeInMatrix ?? defaultIncludeInMatrix(field, isAOI)
+
   function save() {
     onUpdate(draft)
     setEditing(false)
   }
 
   if (editing) {
+    const draftInclude = draft.includeInMatrix ?? defaultIncludeInMatrix(draft, isAOI)
     return (
       <div className="flex flex-wrap items-start gap-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200">
         <input
@@ -96,6 +103,15 @@ function FieldRow({
           value={draft.defaultValue ?? ''}
           onChange={(e) => setDraft((d) => ({ ...d, defaultValue: e.target.value }))}
         />
+        <label className="flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer select-none" title="Include in Cause & Effect matrix">
+          <input
+            type="checkbox"
+            className="accent-indigo-600 w-3.5 h-3.5"
+            checked={draftInclude}
+            onChange={(e) => setDraft((d) => ({ ...d, includeInMatrix: e.target.checked }))}
+          />
+          C&amp;E
+        </label>
         <div className="flex gap-1">
           <button onClick={save} className="p-1 text-indigo-600 hover:text-indigo-800 rounded" title="Save">
             <Check size={14} />
@@ -110,6 +126,13 @@ function FieldRow({
 
   return (
     <div className="group flex items-center gap-3 px-2 py-1.5 rounded hover:bg-gray-50 text-xs">
+      <input
+        type="checkbox"
+        className="accent-indigo-600 w-3.5 h-3.5 flex-shrink-0 cursor-pointer"
+        checked={effectiveInclude}
+        onChange={(e) => onUpdate({ includeInMatrix: e.target.checked })}
+        title="Include in Cause & Effect matrix"
+      />
       <span className="font-mono font-semibold text-gray-800 w-32 truncate" title={field.name}>{field.name}</span>
       <span className="font-mono text-indigo-600 w-28 truncate">{field.dataType}</span>
       {isAOI && field.usage && (
@@ -733,10 +756,170 @@ function GlobalLibraryDrawer({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ── L5K Import Selection Dialog ───────────────────────────────────────────────
+
+function L5KImportDialog({
+  fileName,
+  ifaces,
+  existingNames,
+  onConfirm,
+  onCancel
+}: {
+  fileName: string
+  ifaces: UserInterface[]
+  existingNames: Set<string>
+  onConfirm: (selected: UserInterface[]) => void
+  onCancel: () => void
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(ifaces.map((i) => i.name)))
+  const [search, setSearch] = useState('')
+
+  const aois = ifaces.filter((i) => i.type === 'AOI')
+  const udts = ifaces.filter((i) => i.type === 'UDT')
+
+  const filtered = ifaces.filter((i) => {
+    const q = search.toLowerCase()
+    return i.name.toLowerCase().includes(q) || (i.description ?? '').toLowerCase().includes(q)
+  })
+
+  function toggle(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  function selectAll() { setSelected(new Set(ifaces.map((i) => i.name))) }
+  function selectNone() { setSelected(new Set()) }
+
+  const selectedCount = ifaces.filter((i) => selected.has(i.name)).length
+  const duplicateCount = ifaces.filter((i) => selected.has(i.name) && existingNames.has(i.name)).length
+  const newCount = selectedCount - duplicateCount
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-2xl w-[560px] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="px-5 pt-5 pb-3 border-b border-gray-100 flex-shrink-0">
+          <h2 className="text-sm font-bold text-gray-800">Import L5K Interfaces</h2>
+          <p className="text-xs text-gray-400 mt-1 font-mono truncate">{fileName}</p>
+          <p className="text-xs text-gray-500 mt-2">
+            Found{' '}
+            <span className="font-semibold text-orange-600">{aois.length} AOI{aois.length !== 1 ? 's' : ''}</span>
+            {' and '}
+            <span className="font-semibold text-cyan-600">{udts.length} UDT{udts.length !== 1 ? 's' : ''}</span>
+            {' — select which to import.'}
+          </p>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-5 py-2 border-b border-gray-100 flex-shrink-0">
+          <input
+            autoFocus
+            className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            placeholder="Search interfaces..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button
+            onClick={selectAll}
+            className="px-2 py-1 text-[10px] font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+          >
+            Select all
+          </button>
+          <button
+            onClick={selectNone}
+            className="px-2 py-1 text-[10px] font-semibold text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            None
+          </button>
+        </div>
+
+        {/* Interface list */}
+        <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-1 min-h-0">
+          {filtered.length === 0 && (
+            <p className="text-xs text-gray-400 italic text-center py-6">No interfaces match your search.</p>
+          )}
+          {filtered.map((iface) => {
+            const isSelected = selected.has(iface.name)
+            const isDuplicate = existingNames.has(iface.name)
+            return (
+              <button
+                key={iface.name}
+                onClick={() => toggle(iface.name)}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                  isSelected
+                    ? 'bg-indigo-50 border-indigo-200'
+                    : 'bg-white border-gray-100 opacity-50'
+                }`}
+              >
+                <span className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                  isSelected ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-gray-300'
+                }`}>
+                  {isSelected && <Check size={10} className="text-white" />}
+                </span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${
+                  iface.type === 'AOI' ? 'bg-orange-100 text-orange-700' : 'bg-cyan-100 text-cyan-700'
+                }`}>
+                  {iface.type}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-gray-800">{iface.name}</span>
+                  {iface.description && (
+                    <span className="text-xs text-gray-400 ml-2 truncate">{iface.description}</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-gray-400 flex-shrink-0">
+                  {iface.fields.length} field{iface.fields.length !== 1 ? 's' : ''}
+                </span>
+                {isDuplicate && (
+                  <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded font-semibold flex-shrink-0">
+                    exists
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-gray-100 flex items-center gap-3 flex-shrink-0">
+          {duplicateCount > 0 && (
+            <span className="text-[10px] text-amber-600">
+              {duplicateCount} already in project (will skip)
+            </span>
+          )}
+          <div className="flex-1" />
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(ifaces.filter((i) => selected.has(i.name)))}
+            className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {newCount > 0
+              ? `Import ${newCount} interface${newCount !== 1 ? 's' : ''}`
+              : selectedCount === 0
+                ? 'Continue without interfaces'
+                : 'Continue (all duplicates)'}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
 // ── Library sub-panel ─────────────────────────────────────────────────────────
 
 function LibraryPanel() {
-  const { userInterfaces, interfaceInstances, addUserInterface, addUserInterfacesBulk, addInterfaceInstance, addTabWithFlowchart, setActiveTab } = useDiagramStore()
+  const { userInterfaces, interfaceInstances, addUserInterface, addUserInterfacesBulk, addInterfaceInstance, addTab } = useDiagramStore()
 
   const [showNewIface, setShowNewIface] = useState(false)
   const [showNewInstance, setShowNewInstance] = useState(false)
@@ -745,6 +928,7 @@ function LibraryPanel() {
   const [showGlobalLib, setShowGlobalLib] = useState(false)
   const [importToast, setImportToast] = useState<string | null>(null)
   const [dragOverL5k, setDragOverL5k] = useState(false)
+  const [l5kPending, setL5kPending] = useState<{ fileName: string; text: string; ifaces: UserInterface[] } | null>(null)
   const l5kInputRef = useRef<HTMLInputElement | null>(null)
 
   function showToast(msg: string) {
@@ -771,7 +955,8 @@ function LibraryPanel() {
       dataType,
       usage: safeUsage,
       description: src.description ? String(src.description) : undefined,
-      defaultValue: src.defaultValue !== undefined ? String(src.defaultValue) : undefined
+      defaultValue: src.defaultValue !== undefined ? String(src.defaultValue) : undefined,
+      includeInMatrix: typeof src.includeInMatrix === 'boolean' ? src.includeInMatrix : undefined
     }
   }
 
@@ -844,24 +1029,168 @@ function LibraryPanel() {
     try {
       const text = await file.text()
       const ifaces = parseL5KInterfaces(text)
-      const sequences = parseL5KSequences(text)
 
-      const ifaceMsg = importParsedInterfaces(ifaces)
+      if (ifaces.length > 0) {
+        setL5kPending({ fileName: file.name, text, ifaces })
+      } else {
+        finishL5KImport(file.name, text, [])
+      }
+    } catch {
+      showToast('L5K import failed — could not parse file')
+    }
+  }
+
+  function finishL5KImport(fileName: string, text: string, selectedIfaces: UserInterface[]) {
+    try {
+      const taskMap = parseL5KTasks(text)
+      const sequences = parseL5KSequences(text, taskMap)
+
+      const ifaceMsg = importParsedInterfaces(selectedIfaces)
+
+      // ── Auto-create Plant / Area / Location / Instances ──────────────
+      const controllerName = parseL5KControllerName(text)
+      const plcName = controllerName || fileName.replace(/\.l5k$/i, '') || 'Unknown PLC'
+      const programTags = parseL5KProgramTags(text)
+
+      const snap = useDiagramStore.getState()
+      const ifaceByName = new Map<string, string>()
+      for (const ui of snap.userInterfaces) ifaceByName.set(ui.name, ui.id)
+
+      const matchingTags = programTags.filter(t => ifaceByName.has(t.dataType))
+      let instCount = 0
+
+      if (taskMap.size > 0 || matchingTags.length > 0) {
+        let plantId = snap.plants.find(p => p.name === plcName)?.id
+        if (!plantId) {
+          plantId = uid('plant')
+          snap.addPlant({ id: plantId, name: plcName })
+        }
+
+        const taskAreaMap = new Map<string, string>()
+        for (const taskName of new Set(taskMap.values())) {
+          let areaId = snap.areas.find(a => a.plantId === plantId && a.name === taskName)?.id
+          if (!areaId) {
+            areaId = uid('area')
+            snap.addArea({ id: areaId, name: taskName, plantId })
+          }
+          taskAreaMap.set(taskName, areaId)
+        }
+
+        const progLocMap = new Map<string, string>()
+        for (const [progName, taskName] of taskMap) {
+          if (progLocMap.has(progName)) continue
+          const areaId = taskAreaMap.get(taskName)!
+          let locId = snap.locations.find(l => l.areaId === areaId && l.name === progName)?.id
+          if (!locId) {
+            locId = uid('loc')
+            snap.addLocation({ id: locId, name: progName, areaId })
+          }
+          progLocMap.set(progName, locId)
+        }
+
+        const ctrlScopeTags = matchingTags.filter(t => t.programName === null)
+        const unassignedProgs = [...new Set(
+          matchingTags
+            .filter(t => t.programName !== null && !progLocMap.has(t.programName!))
+            .map(t => t.programName!)
+        )]
+
+        if (ctrlScopeTags.length > 0 || unassignedProgs.length > 0) {
+          let fallbackAreaId = snap.areas.find(a => a.plantId === plantId && a.name === 'Controller Scope')?.id
+          if (!fallbackAreaId) {
+            fallbackAreaId = uid('area')
+            snap.addArea({ id: fallbackAreaId, name: 'Controller Scope', plantId })
+          }
+
+          if (ctrlScopeTags.length > 0) {
+            let locId = snap.locations.find(l => l.areaId === fallbackAreaId && l.name === 'Controller Tags')?.id
+            if (!locId) {
+              locId = uid('loc')
+              snap.addLocation({ id: locId, name: 'Controller Tags', areaId: fallbackAreaId })
+            }
+            progLocMap.set('__ctrl__', locId)
+          }
+
+          for (const pn of unassignedProgs) {
+            let locId = snap.locations.find(l => l.areaId === fallbackAreaId && l.name === pn)?.id
+            if (!locId) {
+              locId = uid('loc')
+              snap.addLocation({ id: locId, name: pn, areaId: fallbackAreaId })
+            }
+            progLocMap.set(pn, locId)
+          }
+        }
+
+        const existingTags = new Set(snap.interfaceInstances.map(inst => inst.tagName))
+        for (const tag of matchingTags) {
+          if (existingTags.has(tag.tagName)) continue
+          const interfaceId = ifaceByName.get(tag.dataType)!
+          const locationId = tag.programName
+            ? progLocMap.get(tag.programName)
+            : progLocMap.get('__ctrl__')
+
+          snap.addInterfaceInstance({
+            id: uid('inst'),
+            name: tag.tagName,
+            tagName: tag.tagName,
+            interfaceId,
+            locationId,
+            description: tag.description,
+            createdAt: new Date().toISOString()
+          })
+          existingTags.add(tag.tagName)
+          instCount++
+        }
+      }
+
+      // Create TreeFolder entries for tasks and programs
+      const state = useDiagramStore.getState()
+      const taskFolderIds = new Map<string, string>()
+      const progFolderIds = new Map<string, string>()
+
+      for (const seq of sequences) {
+        const taskName = seq.taskName || ''
+        const progName = seq.rawProgramName || ''
+
+        if (taskName && !taskFolderIds.has(taskName)) {
+          const id = state.addFolder(taskName, null)
+          taskFolderIds.set(taskName, id)
+        }
+
+        if (progName) {
+          const compositeKey = `${taskName}::${progName}`
+          if (!progFolderIds.has(compositeKey)) {
+            const parentId = taskName ? taskFolderIds.get(taskName)! : null
+            const id = state.addFolder(progName, parentId)
+            progFolderIds.set(compositeKey, id)
+          }
+        }
+      }
+
       let seqCount = 0
-      let firstSeqTabId: string | null = null
       for (const seq of sequences) {
         const { nodes, edges } = l5kSequenceToFlowchart(seq)
-        const tabId = addTabWithFlowchart(seq.programName, nodes, edges)
-        if (!firstSeqTabId) firstSeqTabId = tabId
+        const taskName = seq.taskName || ''
+        const progName = seq.rawProgramName || ''
+        const compositeKey = `${taskName}::${progName}`
+        const folderId = progFolderIds.get(compositeKey)
+          ?? taskFolderIds.get(taskName)
+          ?? null
+        addTab(seq.programName, 'flowchart', {
+          nodes, edges,
+          group: seq.taskName, subGroup: seq.rawProgramName,
+          folderId,
+          activate: false
+        })
         seqCount++
       }
-      if (firstSeqTabId) setActiveTab(firstSeqTabId)
 
       const parts: string[] = []
       if (ifaceMsg) parts.push(ifaceMsg)
       if (seqCount > 0) parts.push(`${seqCount} sequence${seqCount !== 1 ? 's' : ''} as flowchart${seqCount !== 1 ? 's' : ''}`)
+      if (instCount > 0) parts.push(`${instCount} instance${instCount !== 1 ? 's' : ''}`)
       if (parts.length > 0) showToast(`L5K: ${parts.join(' · ')}`)
-      else if (ifaces.length === 0 && sequences.length === 0) showToast('L5K: no AOI/UDT or sequence definitions found')
+      else if (selectedIfaces.length === 0 && sequences.length === 0) showToast('L5K: no AOI/UDT or sequence definitions found')
     } catch {
       showToast('L5K import failed — could not parse file')
     }
@@ -1096,6 +1425,18 @@ function LibraryPanel() {
             setShowNewInstance(false)
           }}
           onCancel={() => setShowNewInstance(false)}
+        />
+      )}
+      {l5kPending && (
+        <L5KImportDialog
+          fileName={l5kPending.fileName}
+          ifaces={l5kPending.ifaces}
+          existingNames={new Set(userInterfaces.map((u) => u.name))}
+          onConfirm={(selected) => {
+            finishL5KImport(l5kPending.fileName, l5kPending.text, selected)
+            setL5kPending(null)
+          }}
+          onCancel={() => setL5kPending(null)}
         />
       )}
     </div>

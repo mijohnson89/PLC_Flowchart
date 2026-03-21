@@ -7,7 +7,7 @@ const ACTOR_TYPES = ['plc', 'hmi', 'device', 'operator', 'system'] as const
 const OUTPUT_TYPES = ['coil', 'move', 'compare', 'timer', 'counter'] as const
 const NODE_COLORS: Record<string, string> = {
   start: '#059669', end: '#dc2626', step: '#10b981',
-  decision: '#ca8a04', process: '#0891b2', output: '#7c3aed',
+  process: '#0891b2', output: '#7c3aed',
   actor: '#2563eb', transition: '#d97706', note: '#eab308'
 }
 
@@ -88,7 +88,7 @@ export function PropertiesPanel() {
 
   if (!selectedNode && !selectedEdge) {
     return (
-      <aside className="w-60 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col">
+      <aside className="min-h-0 bg-white border-t border-gray-200 flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100">
           <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Properties</h2>
         </div>
@@ -104,7 +104,7 @@ export function PropertiesPanel() {
 
   if (selectedEdge) {
     return (
-      <aside className="w-60 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col">
+      <aside className="min-h-0 bg-white border-t border-gray-200 flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Edge</h2>
           <button onClick={deleteEdge} className="p-1 text-red-400 hover:text-red-600 rounded">
@@ -130,7 +130,7 @@ export function PropertiesPanel() {
   const defaultColor = NODE_COLORS[nodeType] ?? '#6b7280'
 
   return (
-    <aside className="w-60 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+    <aside className="min-h-0 bg-white border-t border-gray-200 flex flex-col overflow-hidden flex-shrink-0 max-h-[40%]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <div>
@@ -213,7 +213,7 @@ export function PropertiesPanel() {
           </Field>
         )}
 
-        {(nodeType === 'decision' || nodeType === 'transition') && (
+        {nodeType === 'transition' && (
           <Field label="Condition">
             <Input
               value={data.condition ?? ''}

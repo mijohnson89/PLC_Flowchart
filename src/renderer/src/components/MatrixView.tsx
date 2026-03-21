@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import {
   Grid3x3, AlertCircle, Network, Check, EyeOff,
   ChevronDown, ChevronRight, Building2, LayoutGrid, MapPin, Layers
@@ -14,6 +14,7 @@ function isNumericType(dt: string): boolean {
 }
 
 function isControllableField(field: InterfaceField, ifaceType: InterfaceType): boolean {
+  if (field.includeInMatrix !== undefined) return field.includeInMatrix
   if (ifaceType === 'UDT') return true
   return field.usage === 'Input' || field.usage === 'InOut'
 }
@@ -97,10 +98,8 @@ function BoolCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: M
 // ── Numeric cell ──────────────────────────────────────────────────────────────
 
 function NumericCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: MatrixCellValue) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null)
   return (
     <input
-      ref={inputRef}
       type="number"
       className={`
         w-16 h-7 text-center text-[11px] font-mono border rounded px-1
@@ -512,13 +511,11 @@ interface MatrixViewProps {
 }
 
 export function MatrixView({ tabId }: MatrixViewProps = {}) {
-  const { tabs, userInterfaces, interfaceInstances, matrixData, setMatrixCell } = useDiagramStore()
+  const { tabs, userInterfaces, interfaceInstances, matrixData, setMatrixCell, matrixShownInstances, setMatrixShownInstances } = useDiagramStore()
 
   const flowchartTabs = useMemo(() => tabs.filter((t) => t.type === 'flowchart'), [tabs])
 
   const [internalTabId, setInternalTabId] = useState<string>(() => flowchartTabs[0]?.id ?? '')
-  // Per-flowchart-tab: set of instance IDs to hide
-  const [hiddenByTab, setHiddenByTab] = useState<Record<string, string[]>>({})
 
   // When a tabId prop is provided, use it; otherwise fall back to internal selection
   const selectedTabId = tabId ?? internalTabId
@@ -530,11 +527,6 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
     if (internalTabId && flowchartTabs.find((t) => t.id === internalTabId)) return
     setInternalTabId(flowchartTabs[0]?.id ?? '')
   }, [flowchartTabs, internalTabId, tabId])
-
-  const hiddenInstanceIds = useMemo(
-    () => new Set(hiddenByTab[selectedTabId] ?? []),
-    [hiddenByTab, selectedTabId]
-  )
 
   // ── Rows: steps from the selected flowchart tab ───────────────────────────────
   const rows = useMemo<MatrixRow[]>(() => {
@@ -607,6 +599,12 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
     return result
   }, [userInterfaces, interfaceInstances])
 
+  // Derive hidden set: anything not explicitly in matrixShownInstances is hidden
+  const hiddenInstanceIds = useMemo(() => {
+    const shown = new Set(matrixShownInstances[selectedTabId] ?? [])
+    return new Set(sidebarInstances.map((i) => i.instanceId).filter((id) => !shown.has(id)))
+  }, [sidebarInstances, matrixShownInstances, selectedTabId])
+
   // Which instances have at least one value set for this flowchart's steps
   const usedInstanceIds = useMemo(() => {
     const used = new Set<string>()
@@ -632,26 +630,22 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
   // ── Sidebar actions ───────────────────────────────────────────────────────────
 
   function toggleInstance(instanceId: string) {
-    setHiddenByTab((prev) => {
-      const current = new Set(prev[selectedTabId] ?? [])
-      if (current.has(instanceId)) current.delete(instanceId)
-      else current.add(instanceId)
-      return { ...prev, [selectedTabId]: Array.from(current) }
-    })
+    const current = new Set(matrixShownInstances[selectedTabId] ?? [])
+    if (current.has(instanceId)) current.delete(instanceId)
+    else current.add(instanceId)
+    setMatrixShownInstances(selectedTabId, Array.from(current))
   }
 
   function hideUnused() {
-    const toHide = sidebarInstances
-      .filter((i) => !usedInstanceIds.has(i.instanceId))
-      .map((i) => i.instanceId)
-    setHiddenByTab((prev) => ({
-      ...prev,
-      [selectedTabId]: Array.from(new Set([...(prev[selectedTabId] ?? []), ...toHide]))
-    }))
+    const current = new Set(matrixShownInstances[selectedTabId] ?? [])
+    sidebarInstances.forEach((i) => {
+      if (!usedInstanceIds.has(i.instanceId)) current.delete(i.instanceId)
+    })
+    setMatrixShownInstances(selectedTabId, Array.from(current))
   }
 
   function showAll() {
-    setHiddenByTab((prev) => ({ ...prev, [selectedTabId]: [] }))
+    setMatrixShownInstances(selectedTabId, sidebarInstances.map((i) => i.instanceId))
   }
 
   // ── Early empty state (no flowcharts at all) ──────────────────────────────────

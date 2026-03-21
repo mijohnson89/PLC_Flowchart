@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Panel } from '@xyflow/react'
 import { FileText, RotateCcw, X, ChevronDown } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { PageSizeKey, PageOrientation } from '../types'
@@ -28,11 +27,8 @@ export function PageSizeControl({ readOnly = false }: Props) {
   }
 
   return (
-    <Panel position="top-right">
-      <div className="flex items-center gap-1 pointer-events-auto">
-
-        {/* ── Main toggle button ──────────────────────────────────────── */}
-        <div className="relative">
+    <>
+      <div className="relative">
           <button
             onClick={() => !readOnly && setOpen((p) => !p)}
             title="Set page size"
@@ -100,8 +96,6 @@ export function PageSizeControl({ readOnly = false }: Props) {
           </button>
         )}
 
-      </div>
-
       {/* Click-away to close dropdown */}
       {open && !readOnly && (
         <div
@@ -109,6 +103,6 @@ export function PageSizeControl({ readOnly = false }: Props) {
           onClick={() => setOpen(false)}
         />
       )}
-    </Panel>
+    </>
   )
 }

@@ -128,9 +128,7 @@ export function BaseNode({
           <Handle type="source" position={Position.Right} id="right" />
         </>
       )}
-      {/* Side handles for backward-flow edges (L5K imports, etc.)
-         Only rendered when the node uses default source/target handles —
-         nodes with custom handle layouts (Decision) set noSource/noTarget. */}
+      {/* Side handles for backward-flow edges (L5K imports, etc.) */}
       {!noSource && <Handle type="source" position={Position.Right} id="right-source" style={{ opacity: 0, width: 4, height: 4 }} />}
       {!noTarget && <Handle type="target" position={Position.Right} id="right-target" style={{ opacity: 0, width: 4, height: 4 }} />}
     </div>

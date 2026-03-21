@@ -8,7 +8,6 @@ export type PLCNodeType =
   | 'start'
   | 'end'
   | 'step'
-  | 'decision'
   | 'process'
   | 'output'
   | 'actor'
@@ -18,7 +17,7 @@ export type PLCNodeType =
 export interface PLCNodeData extends Record<string, unknown> {
   label: string
   description?: string
-  condition?: string       // for decision / transition nodes
+  condition?: string       // for transition nodes
   tagName?: string         // for output nodes
   outputType?: 'coil' | 'move' | 'compare' | 'timer' | 'counter'
   stepNumber?: number      // for step nodes
@@ -192,6 +191,7 @@ export interface InterfaceField {
   usage?: AOIFieldUsage     // relevant for AOI parameters
   description?: string
   defaultValue?: string
+  includeInMatrix?: boolean // explicit override for C&E matrix inclusion
 }
 
 export interface UserInterface {
@@ -213,11 +213,68 @@ export interface InterfaceInstance {
   createdAt: string
 }
 
+// ── Tasks ────────────────────────────────────────────────────────────────────
+
+export const TASKS_TAB_ID = '__tasks__'
+
+export interface SubTask {
+  id: string
+  name: string
+  designed: boolean
+  programmed: boolean
+  tested: boolean
+}
+
+export interface Task {
+  id: string
+  name: string
+  flowchartTabId: string | null
+  sequenceTabId: string | null
+  subTasks: SubTask[]
+}
+
+// ── IO Table ──────────────────────────────────────────────────────────────────
+
+export const IO_TABLE_TAB_ID = '__iotable__'
+
+export type IOType = 'DI' | 'DO' | 'AI' | 'AO' | 'RTD' | 'TC' | ''
+
+export interface IORack {
+  id: string
+  name: string
+}
+
+export interface IOEntry {
+  id: string
+  rackId: string
+  slot: string
+  channel: string
+  drawingTag: string
+  drawingReference: string
+  description1: string
+  description2: string
+  description3: string
+  ioType: IOType
+  minRawScale: string
+  maxRawScale: string
+  minEUScale: string
+  maxEUScale: string
+}
+
 // ── Cause & Effect Matrix ─────────────────────────────────────────────────────
 
 /** Sparse 3-level map: stepNodeId → instanceId → fieldId → value */
 export type MatrixCellValue = boolean | number | null
 export type MatrixData = Record<string, Record<string, Record<string, MatrixCellValue>>>
+
+// ── Tree Folder ──────────────────────────────────────────────────────────────
+
+export interface TreeFolder {
+  id: string
+  name: string
+  parentId: string | null
+  sortIndex: number
+}
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
 
@@ -225,6 +282,10 @@ export interface DiagramTab {
   id: string
   name: string
   type: DiagramMode
+  folderId: string | null
+  sortIndex: number
+  group?: string              // PLC task name (L5K metadata)
+  subGroup?: string           // PLC program name (L5K metadata)
   flowNodes: PLCNode[]
   flowEdges: PLCEdge[]
   seqActors: SequenceActor[]
@@ -244,13 +305,20 @@ export interface DiagramProject {
   createdAt: string
   updatedAt: string
   tabs: DiagramTab[]
+  folders?: TreeFolder[]
   activeTabId: string
+  openTabIds?: string[]
   plants?: Plant[]
   areas?: Area[]
   locations?: Location[]
   userInterfaces?: UserInterface[]
   interfaceInstances?: InterfaceInstance[]
   matrixData?: MatrixData
+  matrixShownInstances?: Record<string, string[]>
+  ioRacks?: IORack[]
+  ioEntries?: IOEntry[]
+  tasks?: Task[]
+  taskNotes?: string
 }
 
 // ── Electron API ─────────────────────────────────────────────────────────────

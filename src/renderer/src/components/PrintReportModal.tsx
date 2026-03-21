@@ -40,7 +40,7 @@ const SUB_HEADING: React.CSSProperties = {
   color: '#333',
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+import { locationBreadcrumb as locationBreadcrumbRaw } from '../utils/locationBreadcrumb'
 
 function locationBreadcrumb(
   locationId: string | undefined,
@@ -48,12 +48,7 @@ function locationBreadcrumb(
   areas: Area[],
   plants: Plant[]
 ): string {
-  if (!locationId) return '—'
-  const loc = locations.find((l) => l.id === locationId)
-  if (!loc) return '—'
-  const area = areas.find((a) => a.id === loc.areaId)
-  const plant = area ? plants.find((p) => p.id === area.plantId) : null
-  return [plant?.name, area?.name, loc.name].filter(Boolean).join(' › ')
+  return locationBreadcrumbRaw(locationId, locations, areas, plants) || '—'
 }
 
 // ── Report options types ──────────────────────────────────────────────────────

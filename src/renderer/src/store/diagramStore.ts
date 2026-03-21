@@ -7,14 +7,17 @@ import type {
   PageSizeKey, PageOrientation,
   UserInterface, InterfaceInstance, InterfaceField,
   MatrixData, MatrixCellValue,
-  Plant, Area, Location
+  Plant, Area, Location,
+  TreeFolder,
+  Task, SubTask,
+  IORack, IOEntry
 } from '../types'
-import { INTERFACES_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
 const PROJECT_VERSION = '2.0'
+import { uid } from '../utils/uid'
+
 const DROP_GAP = 64
-let _idCounter = 1
-function uid(prefix = 'node') { return `${prefix}_${Date.now()}_${_idCounter++}` }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +35,8 @@ function emptyTab(name: string, type: DiagramMode): DiagramTab {
     id: uid('tab'),
     name,
     type,
+    folderId: null,
+    sortIndex: 0,
     flowNodes,
     flowEdges: [],
     seqActors: [],
@@ -56,6 +61,67 @@ function patchActive(
   return tabs.map((t) => (t.id === activeTabId ? { ...t, ...patch } : t))
 }
 
+function updateById<T extends { id: string }>(items: T[], id: string, patch: Partial<T>): T[] {
+  return items.map((item) => (item.id === id ? { ...item, ...patch } : item))
+}
+
+function removeById<T extends { id: string }>(items: T[], id: string): T[] {
+  return items.filter((item) => item.id !== id)
+}
+
+function clearLocationRefs(instances: InterfaceInstance[], locationIds: string[]): InterfaceInstance[] {
+  const ids = new Set(locationIds)
+  return instances.map((i) => ids.has(i.locationId ?? '') ? { ...i, locationId: undefined } : i)
+}
+
+/** Migrate legacy group/subGroup tab properties into explicit TreeFolder entries */
+function migrateLegacyGroupsToFolders(tabs: DiagramTab[]): { migratedFolders: TreeFolder[]; migratedTabs: DiagramTab[] } {
+  const folders: TreeFolder[] = []
+  const taskFolderIds = new Map<string, string>()
+  const progFolderIds = new Map<string, string>()
+  let taskIdx = 0
+
+  for (const tab of tabs) {
+    const task = tab.group ?? ''
+    const prog = tab.subGroup ?? ''
+    if (!task && !prog) continue
+
+    if (task && !taskFolderIds.has(task)) {
+      const id = uid('folder')
+      folders.push({ id, name: task, parentId: null, sortIndex: taskIdx++ })
+      taskFolderIds.set(task, id)
+    }
+
+    if (prog) {
+      const compositeKey = `${task}::${prog}`
+      if (!progFolderIds.has(compositeKey)) {
+        const id = uid('folder')
+        const parentId = task ? taskFolderIds.get(task)! : null
+        const siblingCount = folders.filter((f) => f.parentId === parentId).length
+        folders.push({ id, name: prog, parentId, sortIndex: siblingCount })
+        progFolderIds.set(compositeKey, id)
+      }
+    }
+  }
+
+  const parentCounters = new Map<string | null, number>()
+  const migratedTabs = tabs.map((tab) => {
+    const task = tab.group ?? ''
+    const prog = tab.subGroup ?? ''
+    let folderId: string | null = null
+    if (prog) {
+      folderId = progFolderIds.get(`${task}::${prog}`) ?? null
+    } else if (task) {
+      folderId = taskFolderIds.get(task) ?? null
+    }
+    const count = parentCounters.get(folderId) ?? 0
+    parentCounters.set(folderId, count + 1)
+    return { ...tab, folderId, sortIndex: count }
+  })
+
+  return { migratedFolders: folders, migratedTabs }
+}
+
 // ── Store interface ───────────────────────────────────────────────────────────
 
 interface HistoryEntry {
@@ -73,12 +139,21 @@ interface DiagramStore {
   // ── Tabs ───────────────────────────────────────────────────────────────────
   tabs: DiagramTab[]
   activeTabId: string
-  activeTab: () => DiagramTab | undefined
-  addTab: (name: string, type: DiagramMode) => void
-  addTabWithFlowchart: (name: string, nodes: PLCNode[], edges: PLCEdge[]) => string
+  openTabIds: string[]
+  addTab: (name: string, type: DiagramMode, opts?: { nodes?: PLCNode[]; edges?: PLCEdge[]; group?: string; subGroup?: string; folderId?: string | null; activate?: boolean }) => string
   removeTab: (id: string) => void
+  closeTab: (id: string) => void
   renameTab: (id: string, name: string) => void
   setActiveTab: (id: string) => void
+  moveTab: (tabId: string, folderId: string | null, sortIndex: number) => void
+  duplicateTab: (id: string) => void
+
+  // ── Folders ─────────────────────────────────────────────────────────────────
+  folders: TreeFolder[]
+  addFolder: (name: string, parentId?: string | null) => string
+  renameFolder: (id: string, name: string) => void
+  removeFolder: (id: string) => void
+  moveFolder: (folderId: string, parentId: string | null, sortIndex: number) => void
 
   // ── Flowchart (operates on active tab) ────────────────────────────────────
   onFlowNodesChange: (changes: NodeChange<PLCNode>[]) => void
@@ -154,6 +229,31 @@ interface DiagramStore {
   // ── Cause & Effect Matrix ──────────────────────────────────────────────────
   matrixData: MatrixData
   setMatrixCell: (stepId: string, instanceId: string, fieldId: string, value: MatrixCellValue) => void
+  matrixShownInstances: Record<string, string[]>
+  setMatrixShownInstances: (tabId: string, instanceIds: string[]) => void
+
+  // ── IO Table ────────────────────────────────────────────────────────────────
+  ioRacks: IORack[]
+  addIORack: (name: string) => string
+  updateIORack: (id: string, patch: Partial<IORack>) => void
+  removeIORack: (id: string) => void
+  ioEntries: IOEntry[]
+  addIOEntry: (entry: IOEntry) => void
+  updateIOEntry: (id: string, patch: Partial<IOEntry>) => void
+  removeIOEntry: (id: string) => void
+  reorderIOEntry: (id: string, newIndex: number) => void
+
+  // ── Tasks ──────────────────────────────────────────────────────────────────
+  tasks: Task[]
+  addTask: (name: string) => string
+  updateTask: (id: string, patch: Partial<Pick<Task, 'name' | 'flowchartTabId' | 'sequenceTabId'>>) => void
+  removeTask: (id: string) => void
+  reorderTask: (id: string, newIndex: number) => void
+  addSubTask: (taskId: string, name: string) => void
+  updateSubTask: (taskId: string, subTaskId: string, patch: Partial<Pick<SubTask, 'name' | 'designed' | 'programmed' | 'tested'>>) => void
+  removeSubTask: (taskId: string, subTaskId: string) => void
+  taskNotes: string
+  setTaskNotes: (html: string) => void
 
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => void
@@ -176,63 +276,226 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   // ── Tabs ───────────────────────────────────────────────────────────────────
   tabs: initialTabs,
   activeTabId: INTERFACES_TAB_ID,
+  openTabIds: [],
 
-  activeTab: () => {
-    const { tabs, activeTabId } = get()
-    return tabs.find((t) => t.id === activeTabId)
-  },
-
-  addTab: (name, type) => {
-    const tab = emptyTab(name, type)
-    set((s) => ({
-      tabs: [...s.tabs, tab],
-      activeTabId: tab.id,
-      isDirty: true,
-      selectedNodeId: null,
-      selectedEdgeId: null
-    }))
-    get().pushHistory()
-  },
-
-  addTabWithFlowchart: (name, nodes, edges) => {
+  addTab: (name, type, opts) => {
+    const folderId = opts?.folderId ?? null
+    const sortIndex = get().tabs.filter((t) => t.folderId === folderId).length
+    const activate = opts?.activate !== false
     const tab: DiagramTab = {
-      ...emptyTab(name, 'flowchart'),
-      flowNodes: nodes,
-      flowEdges: edges
+      ...emptyTab(name, type),
+      folderId,
+      sortIndex,
+      ...(opts?.nodes ? { flowNodes: opts.nodes } : {}),
+      ...(opts?.edges ? { flowEdges: opts.edges } : {}),
+      ...(opts?.group ? { group: opts.group } : {}),
+      ...(opts?.subGroup ? { subGroup: opts.subGroup } : {})
     }
     set((s) => ({
       tabs: [...s.tabs, tab],
-      activeTabId: tab.id,
-      isDirty: true,
-      selectedNodeId: null,
-      selectedEdgeId: null
+      ...(activate
+        ? { activeTabId: tab.id, selectedNodeId: null, selectedEdgeId: null, openTabIds: [...s.openTabIds, tab.id] }
+        : {}),
+      isDirty: true
     }))
     get().pushHistory()
     return tab.id
   },
 
   removeTab: (id) => {
-    const { tabs, activeTabId } = get()
-    if (tabs.length <= 1) return // always keep at least one tab
-    const idx = tabs.findIndex((t) => t.id === id)
+    const { tabs, activeTabId, openTabIds } = get()
+    if (tabs.length <= 1) return
     const newTabs = tabs.filter((t) => t.id !== id)
-    const newActiveId = id === activeTabId
-      ? (newTabs[Math.max(0, idx - 1)]?.id ?? newTabs[0].id)
-      : activeTabId
-    set({ tabs: newTabs, activeTabId: newActiveId, isDirty: true })
+    const newOpenIds = openTabIds.filter((oid) => oid !== id)
+    let newActiveId = activeTabId
+    if (id === activeTabId) {
+      if (newOpenIds.length > 0) {
+        const oldIdx = openTabIds.indexOf(id)
+        newActiveId = newOpenIds[Math.min(oldIdx, newOpenIds.length - 1)]
+      } else {
+        newActiveId = INTERFACES_TAB_ID
+      }
+    }
+    set({ tabs: newTabs, openTabIds: newOpenIds, activeTabId: newActiveId, isDirty: true })
     get().pushHistory()
   },
 
-  renameTab: (id, name) => {
-    set((s) => ({ tabs: patchActive(s.tabs, id, { name }), isDirty: true }))
+  closeTab: (id) => {
+    const { activeTabId, openTabIds } = get()
+    const newOpenIds = openTabIds.filter((oid) => oid !== id)
+    let newActiveId = activeTabId
+    if (id === activeTabId) {
+      if (newOpenIds.length > 0) {
+        const oldIdx = openTabIds.indexOf(id)
+        newActiveId = newOpenIds[Math.min(oldIdx, newOpenIds.length - 1)]
+      } else {
+        newActiveId = INTERFACES_TAB_ID
+      }
+    }
+    set({ activeTabId: newActiveId, openTabIds: newOpenIds })
   },
 
-  setActiveTab: (id) => set({
+  renameTab: (id, name) => {
+    set((s) => ({ tabs: updateById(s.tabs, id, { name }), isDirty: true }))
+  },
+
+  setActiveTab: (id) => set((s) => ({
     activeTabId: id,
     selectedNodeId: null,
     selectedEdgeId: null,
-    viewingRevisionId: null
-  }),
+    viewingRevisionId: null,
+    openTabIds: id !== INTERFACES_TAB_ID && id !== TASKS_TAB_ID && id !== IO_TABLE_TAB_ID && !s.openTabIds.includes(id)
+      ? [...s.openTabIds, id]
+      : s.openTabIds
+  })),
+
+  moveTab: (tabId, folderId, sortIndex) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === tabId)
+      if (!tab) return s
+      const oldFolderId = tab.folderId
+      let tabs = s.tabs.map((t) =>
+        t.id === tabId ? { ...t, folderId, sortIndex } : t
+      )
+      // Compact sort indices in old parent
+      if (oldFolderId !== folderId) {
+        const oldSiblings = tabs.filter((t) => t.folderId === oldFolderId && t.id !== tabId)
+          .sort((a, b) => a.sortIndex - b.sortIndex)
+        tabs = tabs.map((t) => {
+          if (t.folderId === oldFolderId && t.id !== tabId) {
+            return { ...t, sortIndex: oldSiblings.indexOf(t) }
+          }
+          return t
+        })
+      }
+      // Bump siblings at or after the new sortIndex in the target folder
+      const targetSiblings = tabs.filter((t) => t.folderId === folderId && t.id !== tabId)
+      tabs = tabs.map((t) => {
+        if (t.folderId === folderId && t.id !== tabId && t.sortIndex >= sortIndex) {
+          return { ...t, sortIndex: t.sortIndex + 1 }
+        }
+        return t
+      })
+      // Compact target folder sort indices
+      const finalSiblings = tabs.filter((t) => t.folderId === folderId)
+        .sort((a, b) => a.sortIndex - b.sortIndex)
+      tabs = tabs.map((t) => {
+        if (t.folderId === folderId) {
+          return { ...t, sortIndex: finalSiblings.indexOf(t) }
+        }
+        return t
+      })
+      return { tabs, isDirty: true }
+    })
+  },
+
+  duplicateTab: (id) => {
+    const { tabs, pushHistory } = get()
+    const src = tabs.find((t) => t.id === id)
+    if (!src) return
+    const newTab: DiagramTab = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: uid('tab'),
+      name: `${src.name} (Copy)`,
+      sortIndex: tabs.filter((t) => t.folderId === src.folderId).length,
+      revisions: []
+    }
+    set((s) => ({
+      tabs: [...s.tabs, newTab],
+      activeTabId: newTab.id,
+      openTabIds: [...s.openTabIds, newTab.id],
+      isDirty: true
+    }))
+    pushHistory()
+  },
+
+  // ── Folders ─────────────────────────────────────────────────────────────────
+  folders: [],
+
+  addFolder: (name, parentId = null) => {
+    const id = uid('folder')
+    const sortIndex = get().folders.filter((f) => f.parentId === (parentId ?? null)).length
+    const folder: TreeFolder = { id, name, parentId: parentId ?? null, sortIndex }
+    set((s) => ({ folders: [...s.folders, folder], isDirty: true }))
+    return id
+  },
+
+  renameFolder: (id, name) => {
+    set((s) => ({ folders: updateById(s.folders, id, { name }), isDirty: true }))
+  },
+
+  removeFolder: (id) => {
+    set((s) => {
+      const folder = s.folders.find((f) => f.id === id)
+      if (!folder) return s
+      const parentId = folder.parentId
+      // Collect all descendant folder IDs
+      const descendants = new Set<string>()
+      const collectDescendants = (fid: string) => {
+        descendants.add(fid)
+        s.folders.filter((f) => f.parentId === fid).forEach((f) => collectDescendants(f.id))
+      }
+      collectDescendants(id)
+      // Move tabs in deleted folders to the parent
+      const nextSortBase = s.tabs.filter((t) => t.folderId === parentId).length
+      let bump = 0
+      const tabs = s.tabs.map((t) => {
+        if (descendants.has(t.folderId ?? '')) {
+          return { ...t, folderId: parentId, sortIndex: nextSortBase + bump++ }
+        }
+        return t
+      })
+      // Remove the folder and all its descendant folders
+      const folders = s.folders.filter((f) => !descendants.has(f.id))
+      return { folders, tabs, isDirty: true }
+    })
+  },
+
+  moveFolder: (folderId, parentId, sortIndex) => {
+    set((s) => {
+      const folder = s.folders.find((f) => f.id === folderId)
+      if (!folder) return s
+      // Prevent circular: cannot move a folder into one of its descendants
+      const isDescendant = (pid: string | null): boolean => {
+        if (pid === null) return false
+        if (pid === folderId) return true
+        const parent = s.folders.find((f) => f.id === pid)
+        return parent ? isDescendant(parent.parentId) : false
+      }
+      if (isDescendant(parentId)) return s
+      const oldParent = folder.parentId
+      let folders = s.folders.map((f) =>
+        f.id === folderId ? { ...f, parentId, sortIndex } : f
+      )
+      // Compact old parent
+      if (oldParent !== parentId) {
+        const oldSiblings = folders.filter((f) => f.parentId === oldParent && f.id !== folderId)
+          .sort((a, b) => a.sortIndex - b.sortIndex)
+        folders = folders.map((f) => {
+          if (f.parentId === oldParent && f.id !== folderId) {
+            return { ...f, sortIndex: oldSiblings.indexOf(f) }
+          }
+          return f
+        })
+      }
+      // Bump and compact new parent
+      folders = folders.map((f) => {
+        if (f.parentId === parentId && f.id !== folderId && f.sortIndex >= sortIndex) {
+          return { ...f, sortIndex: f.sortIndex + 1 }
+        }
+        return f
+      })
+      const finalSiblings = folders.filter((f) => f.parentId === parentId)
+        .sort((a, b) => a.sortIndex - b.sortIndex)
+      folders = folders.map((f) => {
+        if (f.parentId === parentId) {
+          return { ...f, sortIndex: finalSiblings.indexOf(f) }
+        }
+        return f
+      })
+      return { folders, isDirty: true }
+    })
+  },
 
   // ── Flowchart ──────────────────────────────────────────────────────────────
   onFlowNodesChange: (changes) => {
@@ -341,9 +604,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       const tab = s.tabs.find((t) => t.id === s.activeTabId)
       if (!tab) return s
       return {
-        tabs: patchActive(s.tabs, s.activeTabId, {
-          seqActors: tab.seqActors.map((a) => (a.id === id ? { ...a, ...patch } : a))
-        }),
+        tabs: patchActive(s.tabs, s.activeTabId, { seqActors: updateById(tab.seqActors, id, patch) }),
         isDirty: true
       }
     })
@@ -355,7 +616,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       if (!tab) return s
       return {
         tabs: patchActive(s.tabs, s.activeTabId, {
-          seqActors: tab.seqActors.filter((a) => a.id !== id),
+          seqActors: removeById(tab.seqActors, id),
           seqMessages: tab.seqMessages.filter((m) => m.fromId !== id && m.toId !== id)
         }),
         isDirty: true
@@ -378,9 +639,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       const tab = s.tabs.find((t) => t.id === s.activeTabId)
       if (!tab) return s
       return {
-        tabs: patchActive(s.tabs, s.activeTabId, {
-          seqMessages: tab.seqMessages.map((m) => (m.id === id ? { ...m, ...patch } : m))
-        }),
+        tabs: patchActive(s.tabs, s.activeTabId, { seqMessages: updateById(tab.seqMessages, id, patch) }),
         isDirty: true
       }
     })
@@ -391,9 +650,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       const tab = s.tabs.find((t) => t.id === s.activeTabId)
       if (!tab) return s
       return {
-        tabs: patchActive(s.tabs, s.activeTabId, {
-          seqMessages: tab.seqMessages.filter((m) => m.id !== id)
-        }),
+        tabs: patchActive(s.tabs, s.activeTabId, { seqMessages: removeById(tab.seqMessages, id) }),
         isDirty: true
       }
     })
@@ -501,51 +758,36 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   locations: [],
 
   addPlant: (plant) => set((s) => ({ plants: [...s.plants, plant], isDirty: true })),
-  updatePlant: (id, patch) => set((s) => ({
-    plants: s.plants.map((p) => p.id === id ? { ...p, ...patch } : p),
-    isDirty: true
-  })),
+  updatePlant: (id, patch) => set((s) => ({ plants: updateById(s.plants, id, patch), isDirty: true })),
   removePlant: (id) => set((s) => {
-    const removedAreas    = s.areas.filter((a) => a.plantId === id).map((a) => a.id)
-    const removedLocs     = s.locations.filter((l) => removedAreas.includes(l.areaId)).map((l) => l.id)
+    const removedAreas = s.areas.filter((a) => a.plantId === id).map((a) => a.id)
+    const removedLocs  = s.locations.filter((l) => removedAreas.includes(l.areaId)).map((l) => l.id)
     return {
-      plants:             s.plants.filter((p) => p.id !== id),
+      plants:             removeById(s.plants, id),
       areas:              s.areas.filter((a) => a.plantId !== id),
       locations:          s.locations.filter((l) => !removedAreas.includes(l.areaId)),
-      interfaceInstances: s.interfaceInstances.map((i) =>
-        removedLocs.includes(i.locationId ?? '') ? { ...i, locationId: undefined } : i
-      ),
+      interfaceInstances: clearLocationRefs(s.interfaceInstances, removedLocs),
       isDirty: true
     }
   }),
 
   addArea: (area) => set((s) => ({ areas: [...s.areas, area], isDirty: true })),
-  updateArea: (id, patch) => set((s) => ({
-    areas: s.areas.map((a) => a.id === id ? { ...a, ...patch } : a),
-    isDirty: true
-  })),
+  updateArea: (id, patch) => set((s) => ({ areas: updateById(s.areas, id, patch), isDirty: true })),
   removeArea: (id) => set((s) => {
     const removedLocs = s.locations.filter((l) => l.areaId === id).map((l) => l.id)
     return {
-      areas:              s.areas.filter((a) => a.id !== id),
+      areas:              removeById(s.areas, id),
       locations:          s.locations.filter((l) => l.areaId !== id),
-      interfaceInstances: s.interfaceInstances.map((i) =>
-        removedLocs.includes(i.locationId ?? '') ? { ...i, locationId: undefined } : i
-      ),
+      interfaceInstances: clearLocationRefs(s.interfaceInstances, removedLocs),
       isDirty: true
     }
   }),
 
   addLocation: (location) => set((s) => ({ locations: [...s.locations, location], isDirty: true })),
-  updateLocation: (id, patch) => set((s) => ({
-    locations: s.locations.map((l) => l.id === id ? { ...l, ...patch } : l),
-    isDirty: true
-  })),
+  updateLocation: (id, patch) => set((s) => ({ locations: updateById(s.locations, id, patch), isDirty: true })),
   removeLocation: (id) => set((s) => ({
-    locations:          s.locations.filter((l) => l.id !== id),
-    interfaceInstances: s.interfaceInstances.map((i) =>
-      i.locationId === id ? { ...i, locationId: undefined } : i
-    ),
+    locations:          removeById(s.locations, id),
+    interfaceInstances: clearLocationRefs(s.interfaceInstances, [id]),
     isDirty: true
   })),
 
@@ -563,31 +805,17 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     isDirty: true
   })),
 
-  updateUserInterface: (id, patch) => set((s) => ({
-    userInterfaces: s.userInterfaces.map((i) => i.id === id ? { ...i, ...patch } : i),
-    isDirty: true
-  })),
+  updateUserInterface: (id, patch) => set((s) => ({ userInterfaces: updateById(s.userInterfaces, id, patch), isDirty: true })),
 
   removeUserInterface: (id) => set((s) => ({
-    userInterfaces: s.userInterfaces.filter((i) => i.id !== id),
+    userInterfaces: removeById(s.userInterfaces, id),
     interfaceInstances: s.interfaceInstances.filter((inst) => inst.interfaceId !== id),
     isDirty: true
   })),
 
-  addInterfaceInstance: (instance) => set((s) => ({
-    interfaceInstances: [...s.interfaceInstances, instance],
-    isDirty: true
-  })),
-
-  updateInterfaceInstance: (id, patch) => set((s) => ({
-    interfaceInstances: s.interfaceInstances.map((i) => i.id === id ? { ...i, ...patch } : i),
-    isDirty: true
-  })),
-
-  removeInterfaceInstance: (id) => set((s) => ({
-    interfaceInstances: s.interfaceInstances.filter((i) => i.id !== id),
-    isDirty: true
-  })),
+  addInterfaceInstance: (instance) => set((s) => ({ interfaceInstances: [...s.interfaceInstances, instance], isDirty: true })),
+  updateInterfaceInstance: (id, patch) => set((s) => ({ interfaceInstances: updateById(s.interfaceInstances, id, patch), isDirty: true })),
+  removeInterfaceInstance: (id) => set((s) => ({ interfaceInstances: removeById(s.interfaceInstances, id), isDirty: true })),
 
   addFieldToInterface: (interfaceId, field) => set((s) => ({
     userInterfaces: s.userInterfaces.map((i) =>
@@ -642,6 +870,140 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     return { matrixData: { ...prev, [stepId]: step }, isDirty: true }
   }),
 
+  matrixShownInstances: {},
+  setMatrixShownInstances: (tabId, instanceIds) => set((s) => ({
+    matrixShownInstances: { ...s.matrixShownInstances, [tabId]: instanceIds }
+  })),
+
+  // ── IO Table ────────────────────────────────────────────────────────────────
+  ioRacks: [],
+
+  addIORack: (name) => {
+    const id = uid('rack')
+    set((s) => ({ ioRacks: [...s.ioRacks, { id, name }], isDirty: true }))
+    get().pushHistory()
+    return id
+  },
+
+  updateIORack: (id, patch) => {
+    set((s) => ({
+      ioRacks: s.ioRacks.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+      isDirty: true
+    }))
+  },
+
+  removeIORack: (id) => {
+    set((s) => ({
+      ioRacks: s.ioRacks.filter((r) => r.id !== id),
+      ioEntries: s.ioEntries.filter((e) => e.rackId !== id),
+      isDirty: true
+    }))
+    get().pushHistory()
+  },
+
+  ioEntries: [],
+
+  addIOEntry: (entry) => {
+    set((s) => ({ ioEntries: [...s.ioEntries, entry], isDirty: true }))
+    get().pushHistory()
+  },
+
+  updateIOEntry: (id, patch) => {
+    set((s) => ({
+      ioEntries: s.ioEntries.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+      isDirty: true
+    }))
+  },
+
+  removeIOEntry: (id) => {
+    set((s) => ({ ioEntries: s.ioEntries.filter((e) => e.id !== id), isDirty: true }))
+    get().pushHistory()
+  },
+
+  reorderIOEntry: (id, newIndex) => {
+    set((s) => {
+      const list = [...s.ioEntries]
+      const oldIdx = list.findIndex((e) => e.id === id)
+      if (oldIdx === -1) return s
+      const [item] = list.splice(oldIdx, 1)
+      list.splice(newIndex, 0, item)
+      return { ioEntries: list, isDirty: true }
+    })
+    get().pushHistory()
+  },
+
+  // ── Tasks ──────────────────────────────────────────────────────────────────
+  tasks: [],
+
+  addTask: (name) => {
+    const id = uid('task')
+    const task: Task = { id, name, flowchartTabId: null, sequenceTabId: null, subTasks: [] }
+    set((s) => ({ tasks: [...s.tasks, task], isDirty: true }))
+    get().pushHistory()
+    return id
+  },
+
+  updateTask: (id, patch) => {
+    set((s) => ({
+      tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      isDirty: true
+    }))
+    get().pushHistory()
+  },
+
+  removeTask: (id) => {
+    set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id), isDirty: true }))
+    get().pushHistory()
+  },
+
+  reorderTask: (id, newIndex) => {
+    set((s) => {
+      const list = [...s.tasks]
+      const oldIdx = list.findIndex((t) => t.id === id)
+      if (oldIdx === -1) return s
+      const [item] = list.splice(oldIdx, 1)
+      list.splice(newIndex, 0, item)
+      return { tasks: list, isDirty: true }
+    })
+    get().pushHistory()
+  },
+
+  addSubTask: (taskId, name) => {
+    const sub: SubTask = { id: uid('sub'), name, designed: false, programmed: false, tested: false }
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId ? { ...t, subTasks: [...t.subTasks, sub] } : t
+      ),
+      isDirty: true
+    }))
+    get().pushHistory()
+  },
+
+  updateSubTask: (taskId, subTaskId, patch) => {
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, subTasks: t.subTasks.map((st) => (st.id === subTaskId ? { ...st, ...patch } : st)) }
+          : t
+      ),
+      isDirty: true
+    }))
+    get().pushHistory()
+  },
+
+  removeSubTask: (taskId, subTaskId) => {
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId ? { ...t, subTasks: t.subTasks.filter((st) => st.id !== subTaskId) } : t
+      ),
+      isDirty: true
+    }))
+    get().pushHistory()
+  },
+
+  taskNotes: '',
+  setTaskNotes: (html) => set({ taskNotes: html, isDirty: true }),
+
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => {
     const tabs = defaultTabs()
@@ -650,9 +1012,13 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       isDirty: false,
       currentFilePath: null,
       tabs,
+      folders: [],
       activeTabId: INTERFACES_TAB_ID,
+      openTabIds: [],
       selectedNodeId: null,
       selectedEdgeId: null,
+      viewingRevisionId: null,
+      pendingFocusNodeId: null,
       history: [{ tabs }],
       historyIndex: 0,
       plants: [],
@@ -660,20 +1026,27 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       locations: [],
       userInterfaces: [],
       interfaceInstances: [],
-      matrixData: {}
+      matrixData: {},
+      matrixShownInstances: {},
+      ioRacks: [],
+      ioEntries: [],
+      tasks: [],
+      taskNotes: ''
     })
   },
 
   loadProject: (project, filePath) => {
-    // Handle legacy v1 format (single flowchart + sequence)
     let tabs: DiagramTab[]
     let activeTabId: string
 
     if (project.tabs) {
-      tabs = project.tabs.map((t) => ({ revisions: [], pageSize: null, pageOrientation: 'portrait' as PageOrientation, ...t }))
+      tabs = project.tabs.map((t) => ({
+        revisions: [], pageSize: null, pageOrientation: 'portrait' as PageOrientation,
+        folderId: null, sortIndex: 0,
+        ...t
+      }))
       activeTabId = project.activeTabId ?? project.tabs[0]?.id
     } else {
-      // Migrate v1 → v2
       const ft = emptyTab('Flowchart', 'flowchart')
       ft.flowNodes = (project as never as { flowchart: { nodes: PLCNode[] } }).flowchart?.nodes ?? []
       ft.flowEdges = (project as never as { flowchart: { edges: PLCEdge[] } }).flowchart?.edges ?? []
@@ -684,12 +1057,22 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       activeTabId = ft.id
     }
 
+    // Migrate legacy group/subGroup → explicit folders if project has no folders
+    let folders: TreeFolder[] = project.folders ?? []
+    if (folders.length === 0) {
+      const { migratedFolders, migratedTabs } = migrateLegacyGroupsToFolders(tabs)
+      folders = migratedFolders
+      tabs = migratedTabs
+    }
+
     set({
       projectName: project.name,
       isDirty: false,
       currentFilePath: filePath,
       tabs,
+      folders,
       activeTabId,
+      openTabIds: project.openTabIds ?? [],
       selectedNodeId: null,
       selectedEdgeId: null,
       history: [{ tabs }],
@@ -699,25 +1082,37 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       locations: project.locations ?? [],
       userInterfaces: project.userInterfaces ?? [],
       interfaceInstances: project.interfaceInstances ?? [],
-      matrixData: project.matrixData ?? {}
+      matrixData: project.matrixData ?? {},
+      matrixShownInstances: project.matrixShownInstances ?? {},
+      ioRacks: project.ioRacks ?? [],
+      ioEntries: project.ioEntries ?? [],
+      tasks: project.tasks ?? [],
+      taskNotes: project.taskNotes ?? ''
     })
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, activeTabId, plants, areas, locations, userInterfaces, interfaceInstances, matrixData } = get()
+    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioEntries, tasks, taskNotes } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       tabs,
+      folders,
       activeTabId,
+      openTabIds,
       plants,
       areas,
       locations,
       userInterfaces,
       interfaceInstances,
-      matrixData
+      matrixData,
+      matrixShownInstances,
+      ioRacks,
+      ioEntries,
+      tasks,
+      taskNotes
     }
   }
 }))

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "iface_1773833487587_1",
+    "name": "FB_Motor",
+    "type": "AOI",
+    "fields": [
+      {
+        "id": "field_1773833495034_2",
+        "name": "AutoRunReq",
+        "dataType": "BOOL",
+        "usage": "Input"
+      }
+    ],
+    "createdAt": "2026-03-18T11:31:27.587Z"
+  }
+]

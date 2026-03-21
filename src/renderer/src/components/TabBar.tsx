@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, Network, AlignJustify, Pencil, Check, Layers } from 'lucide-react'
+import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { DiagramMode } from '../types'
-import { INTERFACES_TAB_ID } from '../types'
+import type { DiagramMode, DiagramTab } from '../types'
+import { INTERFACES_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
   flowchart: <Network size={12} />,
@@ -95,13 +95,18 @@ function NewTabDialog({ onConfirm, onCancel }: {
 
 // ── TabBar ────────────────────────────────────────────────────────────────────
 export function TabBar() {
-  const { tabs, activeTabId, addTab, removeTab, renameTab, setActiveTab } = useDiagramStore()
+  const { tabs, activeTabId, openTabIds, addTab, closeTab, renameTab, setActiveTab } = useDiagramStore()
   const [showNewTab, setShowNewTab] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const editInputRef = useRef<HTMLInputElement>(null)
 
   const isInterfacesActive = activeTabId === INTERFACES_TAB_ID
+  const isTasksActive = activeTabId === TASKS_TAB_ID
+  const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
+  const openTabs = openTabIds
+    .map((id) => tabs.find((t) => t.id === id))
+    .filter((t): t is DiagramTab => t !== undefined)
 
   useEffect(() => {
     if (editingId) editInputRef.current?.focus()
@@ -122,7 +127,7 @@ export function TabBar() {
 
   function handleClose(id: string, e: React.MouseEvent) {
     e.stopPropagation()
-    removeTab(id)
+    closeTab(id)
   }
 
   return (
@@ -148,10 +153,48 @@ export function TabBar() {
           <span>Interfaces</span>
         </div>
 
-        {/* Divider between static tab and diagram tabs */}
+        {/* Static Tasks tab */}
+        <div
+          onClick={() => setActiveTab(TASKS_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isTasksActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Task tracking — design, program and test progress"
+        >
+          <span className={isTasksActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <ClipboardList size={12} />
+          </span>
+          <span>Tasks</span>
+        </div>
+
+        {/* Static IO Table tab */}
+        <div
+          onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isIOTableActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="IO Table — rack, slot, channel mappings"
+        >
+          <span className={isIOTableActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <TableProperties size={12} />
+          </span>
+          <span>IO Table</span>
+        </div>
+
+        {/* Divider between static tabs and diagram tabs */}
         <div className="w-px h-4 bg-gray-300 self-center mr-1 flex-shrink-0" />
 
-        {tabs.map((tab) => {
+        {openTabs.map((tab) => {
           const isActive = tab.id === activeTabId
           const isEditing = editingId === tab.id
 
@@ -216,15 +259,13 @@ export function TabBar() {
                     <Pencil size={10} />
                   </button>
                 )}
-                {tabs.length > 1 && (
-                  <button
-                    onClick={(e) => handleClose(tab.id, e)}
-                    className="p-0.5 text-gray-400 hover:text-red-500 rounded"
-                    title="Close tab"
-                  >
-                    <X size={10} />
-                  </button>
-                )}
+                <button
+                  onClick={(e) => handleClose(tab.id, e)}
+                  className="p-0.5 text-gray-400 hover:text-red-500 rounded"
+                  title="Close tab"
+                >
+                  <X size={10} />
+                </button>
               </div>
             </div>
           )

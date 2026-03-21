@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ReactFlow, Background, Controls, MiniMap,
+  ReactFlow, Background, Controls,
   BackgroundVariant, SelectionMode, Panel,
   MarkerType,
   useReactFlow
@@ -8,7 +8,7 @@ import {
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
 import { toPng, toSvg } from 'html-to-image'
-import { Link2, Link2Off, Lock, LayoutList, Sparkles } from 'lucide-react'
+import { Link2, Link2Off, Lock, LayoutList, Sparkles, Grid3x3, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
@@ -20,7 +20,6 @@ import { PageBoundaryOverlay } from './PageBoundaryOverlay'
 import { PageSizeControl } from './PageSizeControl'
 import { EditableEdge } from './edges/EditableEdge'
 import { StepNode } from './nodes/StepNode'
-import { DecisionNode } from './nodes/DecisionNode'
 import { ProcessNode } from './nodes/ProcessNode'
 import { OutputNode } from './nodes/OutputNode'
 import { ActorNode } from './nodes/ActorNode'
@@ -82,7 +81,7 @@ function findEdgeAtPoint(
 
 const NODE_TYPES = {
   start: StartNode, end: EndNode, step: StepNode,
-  decision: DecisionNode, process: ProcessNode, output: OutputNode,
+  process: ProcessNode, output: OutputNode,
   actor: ActorNode, transition: TransitionNode, note: NoteNode
 }
 
@@ -90,8 +89,7 @@ const EDGE_TYPES = {
   editable: EditableEdge
 }
 
-let idCounter = 1
-function uid() { return `node_${Date.now()}_${idCounter++}` }
+import { uid } from '../utils/uid'
 
 
 export interface CanvasExportRef {
@@ -103,17 +101,23 @@ export interface CanvasExportRef {
 interface FlowchartCanvasProps {
   exportRef?: React.MutableRefObject<CanvasExportRef | null>
   readOnly?: boolean
+  showMatrix?: boolean
+  onToggleMatrix?: () => void
 }
 
 // Inner component — has access to useReactFlow (must be inside ReactFlow provider)
 function CanvasInner({
   connectMode,
   pendingSourceId,
-  readOnly
+  readOnly,
+  showMatrix,
+  onToggleMatrix
 }: {
   connectMode: boolean
   pendingSourceId: string | null
   readOnly: boolean
+  showMatrix?: boolean
+  onToggleMatrix?: () => void
 }) {
   const { getNode } = useReactFlow()
 
@@ -128,8 +132,27 @@ function CanvasInner({
       <GuideLinesOverlay pendingSourceId={connectMode ? pendingSourceId : null} />
       <AlignmentToolbar />
 
-      {/* Page size picker — top-right corner */}
-      <PageSizeControl readOnly={readOnly} />
+      {/* Top-right controls: C&E toggle + Page size */}
+      <Panel position="top-right">
+        <div className="flex items-center gap-1.5 pointer-events-auto">
+          {onToggleMatrix && (
+            <button
+              onClick={onToggleMatrix}
+              title={showMatrix ? 'Hide Cause & Effect matrix' : 'Show Cause & Effect matrix'}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shadow text-xs font-medium transition-all border ${
+                showMatrix
+                  ? 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600'
+              }`}
+            >
+              <Grid3x3 size={13} />
+              {showMatrix ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+              C&amp;E
+            </button>
+          )}
+          <PageSizeControl readOnly={readOnly} />
+        </div>
+      </Panel>
 
       {/* Connect mode status badge */}
       {connectMode && (
@@ -151,7 +174,7 @@ function CanvasInner({
   )
 }
 
-export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvasProps) {
+export function FlowchartCanvas({ exportRef, readOnly = false, showMatrix, onToggleMatrix }: FlowchartCanvasProps) {
   const flowNodes = useDiagramStore(selectFlowNodes)
   const flowEdges = useDiagramStore(selectFlowEdges)
   const {
@@ -180,6 +203,36 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     }, 150)
     return () => clearTimeout(timer)
   }, [pendingFocusNodeId, setPendingFocusNodeId, setSelectedNode])
+
+  // ── Menu-driven actions (Delete Selected, Fit to Screen, Select All) ─────
+  useEffect(() => {
+    const removers = [
+      window.api.onMenu('menu-fit', () => {
+        rfRef.current?.fitView({ padding: 0.12, duration: 300 })
+      }),
+      window.api.onMenu('menu-select-all', () => {
+        if (readOnly || !rfRef.current) return
+        const allNodes = rfRef.current.getNodes().map((n) => ({ ...n, selected: true }))
+        const allEdges = rfRef.current.getEdges().map((e) => ({ ...e, selected: true }))
+        rfRef.current.setNodes(allNodes)
+        rfRef.current.setEdges(allEdges)
+      }),
+      window.api.onMenu('menu-delete', () => {
+        if (readOnly || !rfRef.current) return
+        const s = useDiagramStore.getState()
+        const nodes = rfRef.current.getNodes()
+        const edges = rfRef.current.getEdges()
+        const protectedTypes = ['start', 'end']
+        const survivingNodes = nodes.filter((n) => !n.selected || protectedTypes.includes(n.type ?? ''))
+        const deletedIds = new Set(nodes.filter((n) => n.selected && !protectedTypes.includes(n.type ?? '')).map((n) => n.id))
+        const survivingEdges = edges.filter((e) => !e.selected && !deletedIds.has(e.source) && !deletedIds.has(e.target))
+        s.setFlowNodes(survivingNodes as PLCNode[])
+        s.setFlowEdges(survivingEdges as PLCEdge[])
+        s.pushHistory()
+      })
+    ]
+    return () => removers.forEach((r) => r())
+  }, [readOnly])
 
   // ── Connect tool state ────────────────────────────────────────────────────
   const [connectMode, setConnectMode] = useState(false)
@@ -210,7 +263,7 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     } else if (pendingSourceId !== clickedId) {
       // Second click: create edge
       const newEdge: PLCEdge = {
-        id: uid(),
+        id: uid('edge'),
         source: pendingSourceId,
         target: clickedId,
         type: 'editable'
@@ -375,8 +428,8 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     const topoQ = [...roots]; const topoSeen = new Set(roots)
     while (topoQ.length > 0) {
       const u = topoQ.shift()!; assignLayer(u)
-      for (const { target } of tmpAdj.get(u) ?? []) {
-        if (!backEdges.has('') && !topoSeen.has(target) && allIds.has(target)) {
+      for (const { target, edgeId } of tmpAdj.get(u) ?? []) {
+        if (!backEdges.has(edgeId) && !topoSeen.has(target) && allIds.has(target)) {
           topoSeen.add(target); topoQ.push(target)
         }
       }
@@ -543,7 +596,7 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     // Centre the node on the cursor (typical node ≈ 152 × 60 px)
     const position = { x: canvasPos.x - 76, y: canvasPos.y - 30 }
 
-    const newNodeId = uid()
+    const newNodeId = uid('node')
     const newNode: PLCNode = { id: newNodeId, type: nodeType, position, data: { label } as PLCNodeData }
 
     // ── Check if dropped onto an existing edge → split it ──────────────────
@@ -553,11 +606,10 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     let nextEdges: PLCEdge[]
 
     if (hitEdge) {
-      // Replace the hit edge with two edges through the new node
       nextEdges = [
         ...flowEdges.filter((ed) => ed.id !== hitEdge.id),
-        { id: uid(), source: hitEdge.source, target: newNodeId, type: 'editable' } as PLCEdge,
-        { id: uid(), source: newNodeId,       target: hitEdge.target, type: 'editable' } as PLCEdge
+        { id: uid('edge'), source: hitEdge.source, target: newNodeId, type: 'editable' } as PLCEdge,
+        { id: uid('edge'), source: newNodeId,       target: hitEdge.target, type: 'editable' } as PLCEdge
       ]
     } else {
       nextEdges = flowEdges
@@ -680,7 +732,6 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     const srcNode = flowNodes.find((n) => n.id === e.source)
     const tgtNode = flowNodes.find((n) => n.id === e.target)
 
-    // Preserve edges with explicit custom handles (e.g., decision "yes"/"no")
     const hasCustomHandles =
       (e.sourceHandle && e.sourceHandle !== 'right-source') ||
       (e.targetHandle && e.targetHandle !== 'right-target')
@@ -690,9 +741,8 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
     }
 
     const isBackward = srcNode.position.y > tgtNode.position.y + 10
-    const hasSideHandles = srcNode.type !== 'decision' && tgtNode.type !== 'decision'
 
-    if (isBackward && hasSideHandles) {
+    if (isBackward) {
       return {
         ...e,
         type: 'smoothstep' as const,
@@ -779,18 +829,6 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#cbd5e1" />
         <Controls />
-        <MiniMap
-          nodeColor={(node) => {
-            const colorMap: Record<string, string> = {
-              start: '#059669', end: '#DC2626', step: '#10B981',
-              decision: '#CA8A04', process: '#0891B2', output: '#7C3AED',
-              actor: '#2563EB', transition: '#D97706', note: '#EAB308'
-            }
-            return colorMap[node.type ?? ''] ?? '#94a3b8'
-          }}
-          style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}
-        />
-
         {/* Bottom-left tools: Connect + Tidy Layout */}
         {!readOnly && (
           <Panel position="bottom-left">
@@ -838,6 +876,8 @@ export function FlowchartCanvas({ exportRef, readOnly = false }: FlowchartCanvas
           connectMode={connectMode}
           pendingSourceId={pendingSourceId}
           readOnly={readOnly}
+          showMatrix={showMatrix}
+          onToggleMatrix={onToggleMatrix}
         />
       </ReactFlow>
     </div>

@@ -6,10 +6,8 @@ import {
 import { useDiagramStore } from '../store/diagramStore'
 import type { Plant, Area, Location } from '../types'
 
-// ── Uid helper ────────────────────────────────────────────────────────────────
-
-let _id = 1
-function uid(prefix: string) { return `${prefix}_${Date.now()}_${_id++}` }
+import { uid } from '../utils/uid'
+import { locationBreadcrumb } from '../utils/locationBreadcrumb'
 
 // ── Inline rename input ───────────────────────────────────────────────────────
 // Shown in place of the name when editing = true.
@@ -438,17 +436,13 @@ export function useLocationOptions(): LocationOption[] {
 
 export function LocationBreadcrumb({ locationId }: { locationId?: string }) {
   const { plants, areas, locations } = useDiagramStore()
-  if (!locationId) return null
-  const loc   = locations.find((l) => l.id === locationId)
-  if (!loc) return null
-  const area  = areas.find((a) => a.id === loc.areaId)
-  const plant = area ? plants.find((p) => p.id === area.plantId) : undefined
-  const parts = [plant?.name, area?.name, loc.name].filter(Boolean)
+  const text = locationBreadcrumb(locationId, locations, areas, plants)
+  if (!text) return null
 
   return (
     <span className="inline-flex items-center gap-0.5 text-[10px] text-indigo-500 font-medium">
       <MapPin size={9} className="flex-shrink-0" />
-      {parts.join(' › ')}
+      {text}
     </span>
   )
 }
