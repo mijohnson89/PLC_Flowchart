@@ -5,7 +5,7 @@ import {
   ClipboardList, CheckSquare, Square,
   Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
   Heading1, Heading2, Strikethrough, StickyNote, Minus,
-  Zap, Server, Cpu, Tag, ExternalLink, EyeOff, Eye
+  Zap, Server, Cpu, Tag, ExternalLink, EyeOff, Eye, Link
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { Task, SubTask, TaskAutoGenSettings } from '../types'
@@ -698,6 +698,9 @@ function RichTextNotes() {
   const setTaskNotes = useDiagramStore((s) => s.setTaskNotes)
   const editorRef = useRef<HTMLDivElement>(null)
   const isInternalChange = useRef(false)
+  const [linkPrompt, setLinkPrompt] = useState<{ show: boolean; url: string; text: string }>({ show: false, url: '', text: '' })
+  const savedSelection = useRef<Range | null>(null)
+  const linkUrlRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (editorRef.current && !isInternalChange.current) {
@@ -724,6 +727,88 @@ function RichTextNotes() {
 
   const [, forceUpdate] = useState(0)
   const trackSelection = useCallback(() => forceUpdate((n) => n + 1), [])
+
+  const openLinkPrompt = useCallback(() => {
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount > 0) {
+      savedSelection.current = sel.getRangeAt(0).cloneRange()
+    }
+    const selectedText = sel?.toString() ?? ''
+    const parentAnchor = sel?.anchorNode?.parentElement?.closest('a')
+    setLinkPrompt({
+      show: true,
+      url: parentAnchor?.getAttribute('href') ?? '',
+      text: selectedText || parentAnchor?.textContent || ''
+    })
+    setTimeout(() => linkUrlRef.current?.focus(), 50)
+  }, [])
+
+  const insertLink = useCallback(() => {
+    let url = linkPrompt.url.trim()
+    if (!url) { setLinkPrompt({ show: false, url: '', text: '' }); return }
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url
+
+    if (savedSelection.current) {
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(savedSelection.current)
+    }
+
+    const sel = window.getSelection()
+    const text = linkPrompt.text.trim() || url
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0)
+      if (range.collapsed && !sel.toString()) {
+        const a = document.createElement('a')
+        a.href = url
+        a.textContent = text
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+        range.insertNode(a)
+        range.setStartAfter(a)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      } else {
+        document.execCommand('createLink', false, url)
+        const anchor = sel.anchorNode?.parentElement?.closest('a') ?? editorRef.current?.querySelector(`a[href="${url}"]`)
+        if (anchor) {
+          anchor.setAttribute('target', '_blank')
+          anchor.setAttribute('rel', 'noopener noreferrer')
+        }
+      }
+    }
+    handleInput()
+    setLinkPrompt({ show: false, url: '', text: '' })
+    savedSelection.current = null
+    editorRef.current?.focus()
+  }, [linkPrompt, handleInput])
+
+  const removeLink = useCallback(() => {
+    if (savedSelection.current) {
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(savedSelection.current)
+    }
+    document.execCommand('unlink')
+    handleInput()
+    setLinkPrompt({ show: false, url: '', text: '' })
+    savedSelection.current = null
+    editorRef.current?.focus()
+  }, [handleInput])
+
+  const handleEditorClick = useCallback((e: React.MouseEvent) => {
+    const anchor = (e.target as HTMLElement).closest('a')
+    if (anchor && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      window.open(anchor.getAttribute('href') ?? '', '_blank', 'noopener,noreferrer')
+    }
+  }, [])
+
+  const hasLinkAtCursor = (() => {
+    const sel = window.getSelection()
+    return !!sel?.anchorNode?.parentElement?.closest('a')
+  })()
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -768,7 +853,64 @@ function RichTextNotes() {
         <ToolbarBtn onClick={() => exec('insertHorizontalRule')} title="Horizontal rule">
           <Minus size={13} />
         </ToolbarBtn>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5" />
+
+        <ToolbarBtn active={hasLinkAtCursor} onClick={openLinkPrompt} title="Insert / edit link">
+          <Link size={13} />
+        </ToolbarBtn>
       </div>
+
+      {/* Link prompt */}
+      {linkPrompt.show && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
+          <Link size={11} className="text-indigo-500 flex-shrink-0" />
+          <input
+            ref={linkUrlRef}
+            type="text"
+            placeholder="https://example.com"
+            value={linkPrompt.url}
+            onChange={(e) => setLinkPrompt((p) => ({ ...p, url: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') insertLink()
+              if (e.key === 'Escape') { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }
+            }}
+            className="flex-1 text-xs border border-indigo-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+          />
+          <input
+            type="text"
+            placeholder="Display text (optional)"
+            value={linkPrompt.text}
+            onChange={(e) => setLinkPrompt((p) => ({ ...p, text: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') insertLink()
+              if (e.key === 'Escape') { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }
+            }}
+            className="w-40 text-xs border border-indigo-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+          />
+          <button
+            onClick={insertLink}
+            disabled={!linkPrompt.url.trim()}
+            className="px-2 py-1 text-[10px] font-semibold text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+          >
+            Apply
+          </button>
+          {hasLinkAtCursor && (
+            <button
+              onClick={removeLink}
+              className="px-2 py-1 text-[10px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100 transition-colors"
+            >
+              Remove
+            </button>
+          )}
+          <button
+            onClick={() => { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded"
+          >
+            <Minus size={11} />
+          </button>
+        </div>
+      )}
 
       {/* Editor */}
       <div
@@ -779,6 +921,7 @@ function RichTextNotes() {
         onSelect={trackSelection}
         onKeyUp={trackSelection}
         onMouseUp={trackSelection}
+        onClick={handleEditorClick}
         className="flex-1 overflow-y-auto px-4 py-3 text-sm text-gray-700 focus:outline-none prose prose-sm max-w-none
           [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-gray-900 [&_h1]:mb-2 [&_h1]:mt-3
           [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-gray-800 [&_h2]:mb-1.5 [&_h2]:mt-2
@@ -786,7 +929,8 @@ function RichTextNotes() {
           [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2
           [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2
           [&_li]:mb-0.5
-          [&_hr]:my-3 [&_hr]:border-gray-200"
+          [&_hr]:my-3 [&_hr]:border-gray-200
+          [&_a]:text-indigo-600 [&_a]:underline [&_a]:decoration-indigo-300 [&_a]:hover:text-indigo-800 [&_a]:hover:decoration-indigo-500 [&_a]:cursor-pointer"
         data-placeholder="Write your notes here…"
         style={{ minHeight: 80 }}
       />
