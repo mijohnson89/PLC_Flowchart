@@ -3,12 +3,12 @@ import type { ReactNode, ErrorInfo } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Cpu, Database,
   Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2,
-  BookMarked, Upload, Download, CheckCircle2, BellRing
+  BookMarked, Upload, Download, CheckCircle2, BellRing, Cable
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type {
   UserInterface, InterfaceInstance, InterfaceField,
-  InterfaceType, AOIFieldUsage
+  InterfaceType, AOIFieldUsage, IOType
 } from '../types'
 import { MatrixView } from './MatrixView'
 import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
@@ -34,6 +34,17 @@ const USAGE_COLOR: Record<AOIFieldUsage, string> = {
   Output: 'bg-green-100 text-green-700',
   InOut:  'bg-purple-100 text-purple-700',
   Local:  'bg-gray-100 text-gray-600',
+}
+
+/** Which IO types are compatible with a given field usage */
+function ioTypeMatchesUsage(ioType: IOType, usage: AOIFieldUsage | undefined): boolean {
+  if (!ioType) return true
+  if (usage === 'InOut') return true
+  const isInputIO = ioType === 'DI' || ioType === 'AI' || ioType === 'RTD' || ioType === 'TC'
+  const isOutputIO = ioType === 'DO' || ioType === 'AO'
+  if (isInputIO) return usage === 'Input'
+  if (isOutputIO) return usage === 'Output'
+  return true
 }
 
 // ── Field row ─────────────────────────────────────────────────────────────────
@@ -124,6 +135,16 @@ function FieldRow({
             onChange={(e) => setDraft((d) => ({ ...d, alarmMessage: e.target.value }))}
           />
         )}
+        <label className="flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer select-none" title="Physical IO field">
+          <input
+            type="checkbox"
+            className="accent-emerald-600 w-3.5 h-3.5"
+            checked={draft.isIO ?? false}
+            onChange={(e) => setDraft((d) => ({ ...d, isIO: e.target.checked }))}
+          />
+          <Cable size={10} className="text-emerald-500" />
+          IO
+        </label>
         <div className="flex gap-1">
           <button onClick={save} className="p-1 text-indigo-600 hover:text-indigo-800 rounded" title="Save">
             <Check size={14} />
@@ -152,6 +173,13 @@ function FieldRow({
         onChange={(e) => onUpdate({ isAlarm: e.target.checked })}
         title="Alarm field"
       />
+      <input
+        type="checkbox"
+        className="accent-emerald-600 w-3.5 h-3.5 flex-shrink-0 cursor-pointer"
+        checked={field.isIO ?? false}
+        onChange={(e) => onUpdate({ isIO: e.target.checked })}
+        title="Physical IO"
+      />
       <span className="font-mono font-semibold text-gray-800 w-32 truncate" title={field.name}>{field.name}</span>
       <span className="font-mono text-indigo-600 w-28 truncate">{field.dataType}</span>
       {isAOI && field.usage && (
@@ -163,6 +191,12 @@ function FieldRow({
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10px] text-amber-700 truncate max-w-[200px]" title={field.alarmMessage || 'No alarm message'}>
           <BellRing size={8} />
           {field.alarmMessage || <span className="italic text-amber-400">No message</span>}
+        </span>
+      )}
+      {field.isIO && (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-700">
+          <Cable size={8} />
+          IO
         </span>
       )}
       {field.description && (
@@ -398,6 +432,7 @@ function InterfaceCard({ iface, onSaveToLibrary }: { iface: UserInterface; onSav
             <div className="flex items-center gap-3 px-2 pb-0.5 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
               <span className="w-3.5 text-center" title="Include in Cause & Effect matrix">C&amp;E</span>
               <span className="w-3.5 text-center" title="Alarm field"><BellRing size={8} /></span>
+              <span className="w-3.5 text-center" title="Physical IO"><Cable size={8} /></span>
               <span>Field</span>
             </div>
           )}
@@ -501,15 +536,33 @@ function NewInterfaceDialog({ onConfirm, onCancel }: {
 
 function InstanceCard({ instance, ifaces }: { instance: InterfaceInstance; ifaces: UserInterface[] }) {
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [draftName, setDraftName]       = useState(instance.name)
   const [draftTag, setDraftTag]         = useState(instance.tagName)
   const [draftDesc, setDraftDesc]       = useState(instance.description ?? '')
   const [draftIfaceId, setDraftIfaceId] = useState(instance.interfaceId)
   const [draftLocId, setDraftLocId]     = useState(instance.locationId ?? '')
 
-  const { updateInterfaceInstance, removeInterfaceInstance } = useDiagramStore()
+  const { updateInterfaceInstance, removeInterfaceInstance, ioEntries, ioSlots, ioRacks } = useDiagramStore()
   const locationOptions = useLocationOptions()
   const linkedIface = ifaces.find((i) => i.id === instance.interfaceId)
+  const ioFields = linkedIface?.fields.filter((f) => f.isIO) ?? []
+  const ioMappings = instance.ioMappings ?? {}
+
+  function ioChannelLabel(entryId: string): string {
+    const entry = ioEntries.find((e) => e.id === entryId)
+    if (!entry) return '???'
+    const slot = ioSlots.find((s) => s.id === entry.slotId)
+    const rack = slot ? ioRacks.find((r) => r.id === slot.rackId) : null
+    return [rack?.name, slot?.name, `Ch ${entry.channel}`, entry.drawingTag, entry.ioType].filter(Boolean).join(' · ')
+  }
+
+  function setIOMapping(fieldId: string, entryId: string | null) {
+    const next = { ...ioMappings }
+    if (entryId) next[fieldId] = entryId
+    else delete next[fieldId]
+    updateInterfaceInstance(instance.id, { ioMappings: Object.keys(next).length > 0 ? next : undefined })
+  }
 
   function save() {
     updateInterfaceInstance(instance.id, {
@@ -568,43 +621,121 @@ function InstanceCard({ instance, ifaces }: { instance: InterfaceInstance; iface
     )
   }
 
+  const mappedCount = Object.keys(ioMappings).length
+  const totalIOFields = ioFields.length
+
   return (
-    <div className="group bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 flex items-center gap-4">
-      <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-        <Tag size={15} className="text-indigo-500" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2">
-          <span className="font-semibold text-sm text-gray-800 truncate">{instance.name}</span>
-          <span className="font-mono text-xs text-indigo-600 truncate">{instance.tagName}</span>
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="group flex items-center gap-4 px-4 py-3">
+        {totalIOFields > 0 ? (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex-shrink-0 w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center hover:bg-emerald-100 transition-colors"
+            title={expanded ? 'Collapse IO mappings' : 'Expand IO mappings'}
+          >
+            {expanded ? <ChevronDown size={14} className="text-emerald-600" /> : <ChevronRight size={14} className="text-emerald-600" />}
+          </button>
+        ) : (
+          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+            <Tag size={15} className="text-indigo-500" />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold text-sm text-gray-800 truncate">{instance.name}</span>
+            <span className="font-mono text-xs text-indigo-600 truncate">{instance.tagName}</span>
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            {instance.description && (
+              <p className="text-xs text-gray-400 truncate">{instance.description}</p>
+            )}
+            <LocationBreadcrumb locationId={instance.locationId} />
+          </div>
         </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          {instance.description && (
-            <p className="text-xs text-gray-400 truncate">{instance.description}</p>
-          )}
-          <LocationBreadcrumb locationId={instance.locationId} />
+        {linkedIface ? (
+          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${
+            linkedIface.type === 'AOI' ? 'bg-orange-100 text-orange-700' : 'bg-cyan-100 text-cyan-700'
+          }`}>{linkedIface.name}</span>
+        ) : (
+          <span className="px-2 py-0.5 rounded text-[10px] bg-red-100 text-red-600 flex-shrink-0">Unlinked</span>
+        )}
+        {totalIOFields > 0 && (
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${
+            mappedCount === totalIOFields
+              ? 'bg-emerald-100 text-emerald-700'
+              : mappedCount > 0
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-gray-100 text-gray-500'
+          }`}>
+            <Cable size={8} className="inline -mt-px mr-0.5" />
+            {mappedCount}/{totalIOFields}
+          </span>
+        )}
+        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          <button
+            onClick={() => {
+              setDraftName(instance.name); setDraftTag(instance.tagName)
+              setDraftDesc(instance.description ?? ''); setDraftIfaceId(instance.interfaceId)
+              setDraftLocId(instance.locationId ?? ''); setEditing(true)
+            }}
+            className="p-1 text-gray-400 hover:text-indigo-600 rounded" title="Edit"
+          ><Pencil size={12} /></button>
+          <button onClick={() => removeInterfaceInstance(instance.id)}
+            className="p-1 text-gray-400 hover:text-red-500 rounded" title="Delete instance"
+          ><Trash2 size={12} /></button>
         </div>
       </div>
-      {linkedIface ? (
-        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${
-          linkedIface.type === 'AOI' ? 'bg-orange-100 text-orange-700' : 'bg-cyan-100 text-cyan-700'
-        }`}>{linkedIface.name}</span>
-      ) : (
-        <span className="px-2 py-0.5 rounded text-[10px] bg-red-100 text-red-600 flex-shrink-0">Unlinked</span>
+
+      {/* IO channel mapping rows */}
+      {expanded && totalIOFields > 0 && (
+        <div className="border-t border-gray-100 px-4 py-2 flex flex-col gap-1">
+          <div className="flex items-center gap-2 px-1 pb-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+            <Cable size={9} className="text-emerald-500" />
+            <span>IO Channel Assignments</span>
+          </div>
+          {ioFields.map((field) => {
+            const entryId = ioMappings[field.id]
+            return (
+              <div key={field.id} className="flex items-center gap-3 px-1 py-1 rounded hover:bg-gray-50">
+                <span className="font-mono text-xs font-semibold text-gray-700 w-36 truncate" title={field.name}>{field.name}</span>
+                {field.usage && (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${USAGE_COLOR[field.usage]}`}>
+                    {field.usage}
+                  </span>
+                )}
+                <span className="font-mono text-[10px] text-gray-400 flex-shrink-0">{field.dataType}</span>
+                <select
+                  className={`flex-1 text-xs border rounded px-2 py-1 focus:outline-none focus:ring-1 bg-white min-w-0 ${
+                    entryId
+                      ? 'border-emerald-300 focus:ring-emerald-400 text-emerald-800'
+                      : 'border-gray-200 focus:ring-indigo-300 text-gray-500'
+                  }`}
+                  value={entryId ?? ''}
+                  onChange={(e) => setIOMapping(field.id, e.target.value || null)}
+                >
+                  <option value="">— No channel —</option>
+                  {ioEntries
+                    .filter((entry) => ioTypeMatchesUsage(entry.ioType, field.usage))
+                    .map((entry) => {
+                      const slot = ioSlots.find((s) => s.id === entry.slotId)
+                      const rack = slot ? ioRacks.find((r) => r.id === slot.rackId) : null
+                      const prefix = [rack?.name, slot?.name].filter(Boolean).join(' / ')
+                      const label = [prefix, `Ch ${entry.channel}`, entry.drawingTag, entry.ioType].filter(Boolean).join(' · ')
+                      return <option key={entry.id} value={entry.id}>{label}</option>
+                    })}
+                </select>
+                {entryId && (
+                  <button
+                    onClick={() => setIOMapping(field.id, null)}
+                    className="p-0.5 text-gray-300 hover:text-red-500 rounded flex-shrink-0"
+                    title="Clear assignment"
+                  ><X size={11} /></button>
+                )}
+              </div>
+            )
+          })}
+        </div>
       )}
-      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-        <button
-          onClick={() => {
-            setDraftName(instance.name); setDraftTag(instance.tagName)
-            setDraftDesc(instance.description ?? ''); setDraftIfaceId(instance.interfaceId)
-            setDraftLocId(instance.locationId ?? ''); setEditing(true)
-          }}
-          className="p-1 text-gray-400 hover:text-indigo-600 rounded" title="Edit"
-        ><Pencil size={12} /></button>
-        <button onClick={() => removeInterfaceInstance(instance.id)}
-          className="p-1 text-gray-400 hover:text-red-500 rounded" title="Delete instance"
-        ><Trash2 size={12} /></button>
-      </div>
     </div>
   )
 }
@@ -975,7 +1106,10 @@ function LibraryPanel() {
       dataType,
       usage: safeUsage,
       description: src.description ? String(src.description) : undefined,
-      includeInMatrix: typeof src.includeInMatrix === 'boolean' ? src.includeInMatrix : undefined
+      includeInMatrix: typeof src.includeInMatrix === 'boolean' ? src.includeInMatrix : undefined,
+      isAlarm: typeof src.isAlarm === 'boolean' ? src.isAlarm : undefined,
+      alarmMessage: src.alarmMessage ? String(src.alarmMessage) : undefined,
+      isIO: typeof src.isIO === 'boolean' ? src.isIO : undefined
     }
   }
 

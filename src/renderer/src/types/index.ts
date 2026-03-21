@@ -198,6 +198,7 @@ export interface InterfaceField {
   includeInMatrix?: boolean // explicit override for C&E matrix inclusion
   isAlarm?: boolean         // marks this field as an alarm point (per-instance)
   alarmMessage?: string     // alarm description, prefixed by instance name at display time
+  isIO?: boolean            // marks this field as linked to physical IO
 }
 
 export interface UserInterface {
@@ -217,6 +218,7 @@ export interface InterfaceInstance {
   locationId?: string       // references Location.id
   description?: string
   createdAt: string
+  ioMappings?: Record<string, string>   // fieldId → IOEntry.id (per-instance IO channel assignment)
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────

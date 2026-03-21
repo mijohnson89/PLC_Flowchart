@@ -1,0 +1,7 @@
+Add IO channel mapping between interface instances and IO table entries
+
+- Add ioMappings field to InterfaceInstance for per-instance IO channel assignment
+- Add isIO flag to InterfaceField to mark fields linked to physical IO
+- Add Linked Instance column to IOTablePanel with smart type-based filtering
+- Add expandable IO Channel Assignments section to InstanceCard in InterfacesPanel
+- Preserve isAlarm, alarmMessage, and isIO fields during library import

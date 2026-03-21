@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
   Plus, Trash2, Copy, Download, Upload, Search, X,
-  ChevronDown, ChevronRight, Server, Pencil, Cpu
+  ChevronDown, ChevronRight, Server, Pencil, Cpu, Cable
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { IOEntry, IOType, IORack, IOSlot } from '../types'
@@ -127,11 +127,139 @@ function InlineRename({ value, onCommit, onCancel, className }: {
   )
 }
 
+// ── IO ↔ Instance linking helpers ─────────────────────────────────────────────
+
+interface IOFieldOption {
+  instanceId: string
+  fieldId: string
+  label: string       // "InstanceName.FieldName"
+  instanceName: string
+  fieldName: string
+  usage?: string
+}
+
+function useIOFieldOptions(): IOFieldOption[] {
+  const userInterfaces = useDiagramStore((s) => s.userInterfaces)
+  const interfaceInstances = useDiagramStore((s) => s.interfaceInstances)
+  return useMemo(() => {
+    const opts: IOFieldOption[] = []
+    for (const inst of interfaceInstances) {
+      const iface = userInterfaces.find((ui) => ui.id === inst.interfaceId)
+      if (!iface) continue
+      for (const field of iface.fields) {
+        if (!field.isIO) continue
+        opts.push({
+          instanceId: inst.id,
+          fieldId: field.id,
+          label: `${inst.name}.${field.name}`,
+          instanceName: inst.name,
+          fieldName: field.name,
+          usage: field.usage
+        })
+      }
+    }
+    return opts
+  }, [userInterfaces, interfaceInstances])
+}
+
+function useReverseIOMap(): Map<string, { instanceId: string; fieldId: string }> {
+  const interfaceInstances = useDiagramStore((s) => s.interfaceInstances)
+  return useMemo(() => {
+    const map = new Map<string, { instanceId: string; fieldId: string }>()
+    for (const inst of interfaceInstances) {
+      if (!inst.ioMappings) continue
+      for (const [fieldId, entryId] of Object.entries(inst.ioMappings)) {
+        map.set(entryId, { instanceId: inst.id, fieldId })
+      }
+    }
+    return map
+  }, [interfaceInstances])
+}
+
+const INPUT_IO_TYPES: Set<IOType>  = new Set(['DI', 'AI', 'RTD', 'TC'])
+const OUTPUT_IO_TYPES: Set<IOType> = new Set(['DO', 'AO'])
+
+function usageMatchesIOType(usage: string | undefined, ioType: IOType): boolean {
+  if (!ioType) return true
+  if (usage === 'InOut') return true
+  if (INPUT_IO_TYPES.has(ioType))  return usage === 'Input'
+  if (OUTPUT_IO_TYPES.has(ioType)) return usage === 'Output'
+  return true
+}
+
+function LinkedInstanceSelect({
+  entryId, ioType, options, reverseMap
+}: {
+  entryId: string
+  ioType: IOType
+  options: IOFieldOption[]
+  reverseMap: Map<string, { instanceId: string; fieldId: string }>
+}) {
+  const updateInterfaceInstance = useDiagramStore((s) => s.updateInterfaceInstance)
+  const interfaceInstances = useDiagramStore((s) => s.interfaceInstances)
+
+  const current = reverseMap.get(entryId)
+  const currentKey = current ? `${current.instanceId}::${current.fieldId}` : ''
+
+  const filtered = useMemo(
+    () => options.filter((opt) => usageMatchesIOType(opt.usage, ioType)),
+    [options, ioType]
+  )
+
+  function handleChange(value: string) {
+    if (current) {
+      const oldInst = interfaceInstances.find((i) => i.id === current.instanceId)
+      if (oldInst) {
+        const next = { ...(oldInst.ioMappings ?? {}) }
+        delete next[current.fieldId]
+        updateInterfaceInstance(oldInst.id, { ioMappings: Object.keys(next).length > 0 ? next : undefined })
+      }
+    }
+    if (value) {
+      const [instId, fieldId] = value.split('::')
+      const inst = interfaceInstances.find((i) => i.id === instId)
+      if (inst) {
+        const next = { ...(inst.ioMappings ?? {}), [fieldId]: entryId }
+        updateInterfaceInstance(inst.id, { ioMappings: next })
+      }
+    }
+  }
+
+  const alreadyMapped = new Set<string>()
+  for (const [eid, ref] of reverseMap) {
+    if (eid !== entryId) alreadyMapped.add(`${ref.instanceId}::${ref.fieldId}`)
+  }
+
+  return (
+    <select
+      value={currentKey}
+      onChange={(e) => handleChange(e.target.value)}
+      className={`w-full h-full text-[11px] border-0 outline-none cursor-pointer px-1.5 ${
+        currentKey
+          ? 'bg-emerald-50/60 text-emerald-800 font-medium'
+          : 'bg-transparent text-gray-400'
+      }`}
+    >
+      <option value="">—</option>
+      {filtered.map((opt) => {
+        const key = `${opt.instanceId}::${opt.fieldId}`
+        const taken = alreadyMapped.has(key)
+        return (
+          <option key={key} value={key} disabled={taken}>
+            {opt.label}{taken ? ' (mapped)' : ''}
+          </option>
+        )
+      })}
+    </select>
+  )
+}
+
 // ── Slot section ─────────────────────────────────────────────────────────────
 
 function SlotSection({
   slot, slotIndex, entries, filter, filterType,
   selectedIds, activeCell, onSelectRow, onSetActiveCell,
+  ioFieldOptions, reverseIOMap,
 }: {
   slot: IOSlot
   slotIndex: number
@@ -142,6 +270,8 @@ function SlotSection({
   activeCell: { rowId: string; colKey: string } | null
   onSelectRow: (id: string, shift: boolean) => void
   onSetActiveCell: (cell: { rowId: string; colKey: string }) => void
+  ioFieldOptions: IOFieldOption[]
+  reverseIOMap: Map<string, { instanceId: string; fieldId: string }>
 }) {
   const updateIOSlot = useDiagramStore((s) => s.updateIOSlot)
   const removeIOSlot = useDiagramStore((s) => s.removeIOSlot)
@@ -271,6 +401,13 @@ function SlotSection({
                       {col.label}
                     </th>
                   ))}
+                  <th
+                    className="border-b border-r border-gray-100 px-2 py-1 text-[9px] font-bold text-emerald-500 uppercase tracking-wider whitespace-nowrap"
+                    style={{ minWidth: 200 }}
+                  >
+                    <Cable size={9} className="inline -mt-0.5 mr-1" />
+                    Linked Instance
+                  </th>
                   <th className="border-b border-gray-100 w-7" />
                 </tr>
               </thead>
@@ -326,6 +463,14 @@ function SlotSection({
                           </td>
                         )
                       })}
+                      <td className="border-b border-r border-gray-100 p-0" style={{ minWidth: 200, height: 30 }}>
+                        <LinkedInstanceSelect
+                          entryId={entry.id}
+                          ioType={entry.ioType}
+                          options={ioFieldOptions}
+                          reverseMap={reverseIOMap}
+                        />
+                      </td>
                       <td className="border-b border-gray-100 px-0.5">
                         <button
                           onClick={() => removeIOEntry(entry.id)}
@@ -352,6 +497,7 @@ function SlotSection({
 function RackSection({
   rack, slots, entriesBySlot, filter, filterType,
   selectedIds, activeCell, onSelectRow, onSetActiveCell,
+  ioFieldOptions, reverseIOMap,
 }: {
   rack: IORack
   slots: IOSlot[]
@@ -362,6 +508,8 @@ function RackSection({
   activeCell: { rowId: string; colKey: string } | null
   onSelectRow: (id: string, shift: boolean) => void
   onSetActiveCell: (cell: { rowId: string; colKey: string }) => void
+  ioFieldOptions: IOFieldOption[]
+  reverseIOMap: Map<string, { instanceId: string; fieldId: string }>
 }) {
   const updateIORack = useDiagramStore((s) => s.updateIORack)
   const removeIORack = useDiagramStore((s) => s.removeIORack)
@@ -482,6 +630,8 @@ function RackSection({
                 activeCell={activeCell}
                 onSelectRow={onSelectRow}
                 onSetActiveCell={onSetActiveCell}
+                ioFieldOptions={ioFieldOptions}
+                reverseIOMap={reverseIOMap}
               />
             ))}
           </div>
@@ -500,6 +650,9 @@ export function IOTablePanel() {
   const addIORack = useDiagramStore((s) => s.addIORack)
   const addIOEntry = useDiagramStore((s) => s.addIOEntry)
   const removeIOEntry = useDiagramStore((s) => s.removeIOEntry)
+
+  const ioFieldOptions = useIOFieldOptions()
+  const reverseIOMap = useReverseIOMap()
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeCell, setActiveCell] = useState<{ rowId: string; colKey: string } | null>(null)
@@ -756,6 +909,8 @@ export function IOTablePanel() {
               activeCell={activeCell}
               onSelectRow={handleRowSelect}
               onSetActiveCell={setActiveCell}
+              ioFieldOptions={ioFieldOptions}
+              reverseIOMap={reverseIOMap}
             />
           ))}
         </div>
