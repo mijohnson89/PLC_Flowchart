@@ -1,7 +1,8 @@
-Add IO channel mapping between interface instances and IO table entries
+Add Export to Excel feature with separate tabs for all project data
 
-- Add ioMappings field to InterfaceInstance for per-instance IO channel assignment
-- Add isIO flag to InterfaceField to mark fields linked to physical IO
-- Add Linked Instance column to IOTablePanel with smart type-based filtering
-- Add expandable IO Channel Assignments section to InstanceCard in InterfacesPanel
-- Preserve isAlarm, alarmMessage, and isIO fields during library import
+- Add xlsx dependency for Excel workbook generation
+- Create exportToExcel utility that builds sheets for: Diagrams, Flowchart Nodes, Sequence Messages, Conditions, Interfaces, Instances, IO Table, Locations, Tasks, Alarms, and C&E Matrix
+- Add Export Excel button to Toolbar with Ctrl+Shift+E shortcut
+- Add menu item under File > Export to Excel
+- Wire up IPC handler (dialog:export-excel) for save dialog and file write
+- Add exportExcel method to preload bridge and ElectronAPI type

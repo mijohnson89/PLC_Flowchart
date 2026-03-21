@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, FolderOpen, Save, Undo2, Redo2, Network, Pencil, History, BookOpen } from 'lucide-react'
+import { FileText, FolderOpen, Save, Undo2, Redo2, Network, Pencil, History, BookOpen, Sheet } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import { PrintReportModal } from './PrintReportModal'
+import { exportToExcel } from '../utils/exportToExcel'
 
 interface ToolbarProps {
   showRevisions: boolean
@@ -29,6 +30,7 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
       window.api.onMenu('menu-save', handleSave),
       window.api.onMenu('menu-save-as', handleSaveAs),
       window.api.onMenu('menu-print-report', () => setShowPrintReport(true)),
+      window.api.onMenu('menu-export-excel', handleExportExcel),
       window.api.onMenu('menu-undo', () => useDiagramStore.getState().undo()),
       window.api.onMenu('menu-redo', () => useDiagramStore.getState().redo())
     ]
@@ -64,6 +66,12 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
       s.setCurrentFilePath(result.filePath)
       useDiagramStore.setState({ isDirty: false })
     }
+  }
+
+  async function handleExportExcel() {
+    const data = exportToExcel()
+    const name = `${useDiagramStore.getState().projectName}.xlsx`
+    await window.api.exportExcel(data.buffer, name)
   }
 
   function commitName() {
@@ -103,6 +111,16 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
       >
         <BookOpen size={15} />
         <span className="text-xs hidden sm:block">Print Report</span>
+      </button>
+
+      {/* Export to Excel */}
+      <button
+        onClick={handleExportExcel}
+        title="Export to Excel (Ctrl+Shift+E)"
+        className="toolbar-btn flex items-center gap-1.5"
+      >
+        <Sheet size={15} />
+        <span className="text-xs hidden sm:block">Export Excel</span>
       </button>
 
       <div className="w-px h-5 bg-gray-200 mx-1" />

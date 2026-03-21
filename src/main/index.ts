@@ -45,6 +45,7 @@ function buildMenu(win: BrowserWindow): void {
         { label: 'Save As...', accelerator: 'CmdOrCtrl+Shift+S', click: () => win.webContents.send('menu-save-as') },
         { type: 'separator' },
         { label: 'Print Report…', accelerator: 'CmdOrCtrl+P', click: () => win.webContents.send('menu-print-report') },
+        { label: 'Export to Excel…', accelerator: 'CmdOrCtrl+Shift+E', click: () => win.webContents.send('menu-export-excel') },
         { type: 'separator' },
         { role: 'quit' }
       ]
@@ -150,6 +151,18 @@ ipcMain.handle('dialog:export-interfaces', async (_, { items, defaultName }) => 
   if (!filePath) return false
   writeFileSync(filePath, JSON.stringify(items, null, 2), 'utf-8')
   return true
+})
+
+// ── Export to Excel ──────────────────────────────────────────────────────────
+
+ipcMain.handle('dialog:export-excel', async (_, { buffer, defaultName }) => {
+  const { filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName ?? 'export.xlsx',
+    filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
+  })
+  if (!filePath) return { success: false }
+  writeFileSync(filePath, Buffer.from(buffer))
+  return { success: true, filePath }
 })
 
 // ── Print report ─────────────────────────────────────────────────────────────

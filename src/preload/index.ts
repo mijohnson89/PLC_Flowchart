@@ -15,11 +15,15 @@ contextBridge.exposeInMainWorld('api', {
   exportInterfaces: (items: unknown, defaultName?: string) =>
     ipcRenderer.invoke('dialog:export-interfaces', { items, defaultName }),
 
+  // Export to Excel
+  exportExcel: (buffer: ArrayBuffer, defaultName?: string) =>
+    ipcRenderer.invoke('dialog:export-excel', { buffer: Array.from(new Uint8Array(buffer)), defaultName }),
+
   // Menu events (main -> renderer)
   onMenu: (channel: string, cb: () => void) => {
     const validChannels = [
       'menu-new', 'menu-open', 'menu-save', 'menu-save-as',
-      'menu-print-report',
+      'menu-print-report', 'menu-export-excel',
       'menu-undo', 'menu-redo', 'menu-delete', 'menu-fit', 'menu-select-all'
     ]
     if (validChannels.includes(channel)) {
