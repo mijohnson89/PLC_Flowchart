@@ -1,8 +1,18 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
-import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron'
+import { join, basename, extname } from 'path'
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, copyFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+
+/** Current project file path — kept in sync when saving/opening */
+let currentProjectPath: string | null = null
+
+/** Derive the companion _files folder from the project .plcd path */
+function companionDir(projectPath: string): string {
+  const dir = projectPath.replace(/\.plcd$/i, '_files')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -104,6 +114,7 @@ ipcMain.handle('dialog:save', async (_, { content, defaultName }) => {
   })
   if (!filePath) return { success: false }
   writeFileSync(filePath, JSON.stringify(content, null, 2), 'utf-8')
+  currentProjectPath = filePath
   return { success: true, filePath }
 })
 
@@ -114,6 +125,7 @@ ipcMain.handle('dialog:open', async () => {
   })
   if (canceled || !filePaths[0]) return { success: false }
   const raw = readFileSync(filePaths[0], 'utf-8')
+  currentProjectPath = filePaths[0]
   return { success: true, content: JSON.parse(raw), filePath: filePaths[0] }
 })
 
@@ -207,4 +219,68 @@ ipcMain.handle('print:report', async (_, { html, defaultName }) => {
     printWin.close()
     try { unlinkSync(tmpPath) } catch { /* ignore */ }
   }
+})
+
+// ── Notes companion-file management ─────────────────────────────────────────
+
+function resolveProjectPath(explicitPath?: string): string | null {
+  return explicitPath || currentProjectPath || null
+}
+
+ipcMain.handle('notes:import-file', async (_, arg) => {
+  const projectPath = resolveProjectPath(arg?.projectPath)
+  if (!projectPath) {
+    await dialog.showMessageBox({
+      type: 'warning',
+      message: 'Please save the project first before attaching files.'
+    })
+    return null
+  }
+
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    title: 'Attach file to Notes',
+    filters: [
+      { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf'] },
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp'] },
+      { name: 'All Files', extensions: ['*'] }
+    ],
+    properties: ['openFile']
+  })
+  if (canceled || !filePaths[0]) return null
+
+  const srcPath = filePaths[0]
+  const origName = basename(srcPath)
+  const ext = extname(origName)
+  const base = origName.slice(0, origName.length - ext.length)
+
+  const dir = companionDir(projectPath)
+
+  let destName = origName
+  let counter = 1
+  while (existsSync(join(dir, destName))) {
+    destName = `${base} (${counter})${ext}`
+    counter++
+  }
+
+  copyFileSync(srcPath, join(dir, destName))
+  return { fileName: origName, relativePath: destName }
+})
+
+ipcMain.handle('notes:open-file', async (_, { relativePath, projectPath: pp }) => {
+  const projectPath = resolveProjectPath(pp)
+  if (!projectPath) return false
+  const dir = companionDir(projectPath)
+  const fullPath = join(dir, relativePath)
+  if (!existsSync(fullPath)) return false
+  await shell.openPath(fullPath)
+  return true
+})
+
+ipcMain.handle('notes:delete-file', (_, { relativePath, projectPath: pp }) => {
+  const projectPath = resolveProjectPath(pp)
+  if (!projectPath) return false
+  const dir = projectPath.replace(/\.plcd$/i, '_files')
+  const fullPath = join(dir, relativePath)
+  if (!existsSync(fullPath)) return true
+  try { unlinkSync(fullPath); return true } catch { return false }
 })

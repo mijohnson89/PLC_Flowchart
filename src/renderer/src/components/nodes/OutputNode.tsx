@@ -23,6 +23,7 @@ export function OutputNode({ data, selected }: NodeProps<{ data: PLCNodeData }>)
       sublabel={sub || undefined}
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

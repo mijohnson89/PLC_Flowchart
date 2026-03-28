@@ -11,7 +11,7 @@ import { Link2, Link2Off, Lock, LayoutList, Sparkles, Grid3x3, PanelRightClose, 
 import '@xyflow/react/dist/style.css'
 
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
-import type { PLCNodeData, PLCNodeType, PLCNode, PLCEdge } from '../types'
+import type { PLCNodeData, PLCNodeType, PLCNode, PLCEdge, PLCEdgeData } from '../types'
 import { AlignmentToolbar } from './AlignmentToolbar'
 import { GuideLinesOverlay } from './GuideLinesOverlay'
 import { PageBoundaryOverlay } from './PageBoundaryOverlay'
@@ -638,6 +638,14 @@ export function FlowchartCanvas({ readOnly = false, showMatrix, onToggleMatrix, 
   // dashed animation, and smoothstep routing. All edges get arrow markers.
   const arrow = { type: MarkerType.ArrowClosed, width: 16, height: 16 }
   const styledEdges = flowEdges.map((e) => {
+    const data = e.data as PLCEdgeData | undefined
+    const conditionStr =
+      (data?.condition != null && String(data.condition).trim()) ||
+      (typeof e.label === 'string' && e.label.trim()) ||
+      (data?.label != null && String(data.label).trim()) ||
+      ''
+    const labelPatch = conditionStr ? { label: conditionStr } : {}
+
     const srcNode = flowNodes.find((n) => n.id === e.source)
     const tgtNode = flowNodes.find((n) => n.id === e.target)
 
@@ -646,7 +654,7 @@ export function FlowchartCanvas({ readOnly = false, showMatrix, onToggleMatrix, 
       (e.targetHandle && e.targetHandle !== 'right-target')
 
     if (!srcNode || !tgtNode || hasCustomHandles) {
-      return { ...e, type: e.type || 'editable', markerEnd: arrow }
+      return { ...e, ...labelPatch, type: e.type || 'editable', markerEnd: arrow }
     }
 
     const isBackward = srcNode.position.y > tgtNode.position.y + 10
@@ -654,6 +662,7 @@ export function FlowchartCanvas({ readOnly = false, showMatrix, onToggleMatrix, 
     if (isBackward) {
       return {
         ...e,
+        ...labelPatch,
         type: 'smoothstep' as const,
         sourceHandle: 'right-source',
         targetHandle: 'right-target',
@@ -665,6 +674,7 @@ export function FlowchartCanvas({ readOnly = false, showMatrix, onToggleMatrix, 
 
     return {
       ...e,
+      ...labelPatch,
       type: 'editable' as const,
       sourceHandle: undefined,
       targetHandle: undefined,

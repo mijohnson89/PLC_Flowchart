@@ -23,6 +23,7 @@ export function ActorNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) 
       leftHandles
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

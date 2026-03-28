@@ -14,6 +14,7 @@ export function StartNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) 
       noTarget
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

@@ -13,6 +13,7 @@ export function TransitionNode({ data, selected }: NodeProps<{ data: PLCNodeData
       sublabel={d.condition}
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

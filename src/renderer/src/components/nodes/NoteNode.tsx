@@ -10,6 +10,7 @@ export function NoteNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
       typeLabel="Note"
       selected={selected}
       label={d.label || 'Note…'}
+      stepLinks={d.stepLinks}
     />
   )
 }

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { EdgeLabelRenderer, useReactFlow, useStore, getSmoothStepPath } from '@xyflow/react'
 import type { EdgeProps } from '@xyflow/react'
-import type { PLCEdgeData } from '../../types'
+import type { PLCEdge, PLCEdgeData } from '../../types'
+
+function edgeConditionText(label: unknown, data: PLCEdgeData | undefined): string {
+  const fromCond = data?.condition != null ? String(data.condition).trim() : ''
+  if (fromCond) return fromCond
+  const fromEdgeLabel = typeof label === 'string' ? label.trim() : ''
+  if (fromEdgeLabel) return fromEdgeLabel
+  return data?.label != null ? String(data.label).trim() : ''
+}
 
 interface WP { x: number; y: number }
 
@@ -29,16 +37,18 @@ function buildOrthogonalPath(pts: WP[]): string {
 
 export function EditableEdge({
   id,
+  label,
   sourceX, sourceY, sourcePosition,
   targetX, targetY, targetPosition,
   data, selected, markerEnd, style
-}: EdgeProps) {
+}: EdgeProps<PLCEdge>) {
   const { setEdges } = useReactFlow()
   const transform = useStore((s) => s.transform)
   const tRef = useRef(transform)
   useEffect(() => { tRef.current = transform }, [transform])
 
   const d = data as PLCEdgeData | undefined
+  const conditionText = edgeConditionText(label, d)
   const waypoints: WP[] = d?.waypoints ?? []
 
   // ── Path ────────────────────────────────────────────────────────────────────
@@ -152,13 +162,13 @@ export function EditableEdge({
       />
 
       <EdgeLabelRenderer>
-        {/* Edge label */}
-        {d?.label && (
+        {/* Jump / transition condition (matrix + properties use data.condition) */}
+        {conditionText && (
           <div
-            className="nodrag nopan pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 text-[11px] text-gray-500 bg-slate-100 rounded px-1.5 py-0.5"
+            className="nodrag nopan pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 max-w-[min(200px,40vw)] text-[11px] font-medium text-gray-800 bg-white/95 border border-slate-200 shadow-sm rounded px-1.5 py-0.5 text-center leading-snug"
             style={{ left: labelX, top: labelY }}
           >
-            {d.label}
+            {conditionText}
           </div>
         )}
 

@@ -13,6 +13,7 @@ export function ProcessNode({ data, selected }: NodeProps<{ data: PLCNodeData }>
       sublabel={d.description}
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

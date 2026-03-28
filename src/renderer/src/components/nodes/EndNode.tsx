@@ -14,6 +14,7 @@ export function EndNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
       noSource
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

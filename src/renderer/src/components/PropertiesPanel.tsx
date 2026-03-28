@@ -1,7 +1,7 @@
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
-import type { PLCNodeData, PLCNodeType, PackMLState } from '../types'
+import type { PLCNodeData, PLCNodeType, PackMLState, StepLink } from '../types'
 import { PACKML_STATES, PACKML_WAIT_STATES, PACKML_ACTING_STATES, INTERFACES_TAB_ID } from '../types'
-import { Trash2, Link2, X } from 'lucide-react'
+import { Trash2, Link2, X, Plus, ArrowRight } from 'lucide-react'
 
 const ACTOR_TYPES = ['plc', 'hmi', 'device', 'operator', 'system'] as const
 const OUTPUT_TYPES = ['coil', 'move', 'compare', 'timer', 'counter'] as const
@@ -278,6 +278,99 @@ export function PropertiesPanel() {
             </button>
           </div>
         </Field>
+
+        {/* ── Step Links (node references) ────────────────────────────── */}
+        <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1">
+              <ArrowRight size={10} />
+              Step Links
+            </label>
+            <button
+              className="flex items-center gap-0.5 text-[10px] text-blue-500 hover:text-blue-700 font-medium"
+              onClick={() => {
+                const existing: StepLink[] = data.stepLinks ?? []
+                const id = `sl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+                patchNode({ stepLinks: [...existing, { id, targetNodeId: '', reason: '', description: '' }] })
+              }}
+            >
+              <Plus size={10} /> Add
+            </button>
+          </div>
+
+          {(data.stepLinks ?? []).length === 0 && (
+            <p className="text-[10px] text-gray-400 leading-snug">
+              Add references to other nodes. They appear as clickable links at the bottom of this node.
+            </p>
+          )}
+
+          {(data.stepLinks ?? []).map((link: StepLink, idx: number) => {
+            const targetNode = flowNodes.find((n) => n.id === link.targetNodeId)
+            return (
+              <div key={link.id} className="flex flex-col gap-1 p-2 bg-gray-50 rounded-lg border border-gray-100">
+                <div className="flex items-center gap-1">
+                  <select
+                    className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    value={link.targetNodeId}
+                    onChange={(e) => {
+                      const updated = [...(data.stepLinks ?? [])]
+                      updated[idx] = { ...updated[idx], targetNodeId: e.target.value }
+                      patchNode({ stepLinks: updated })
+                    }}
+                  >
+                    <option value="">— Select target —</option>
+                    {flowNodes
+                      .filter((n) => n.id !== selectedNodeId)
+                      .map((n) => {
+                        const nd = n.data as PLCNodeData
+                        return (
+                          <option key={n.id} value={n.id}>
+                            [{n.type}] {nd.label || n.id}
+                          </option>
+                        )
+                      })}
+                  </select>
+                  <button
+                    onClick={() => {
+                      const updated = (data.stepLinks ?? []).filter((_: StepLink, i: number) => i !== idx)
+                      patchNode({ stepLinks: updated })
+                    }}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded"
+                    title="Remove link"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+                <input
+                  className="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Condition (e.g. Timer expired, Fault detected)"
+                  value={link.reason ?? ''}
+                  onChange={(e) => {
+                    const updated = [...(data.stepLinks ?? [])]
+                    updated[idx] = { ...updated[idx], reason: e.target.value }
+                    patchNode({ stepLinks: updated })
+                  }}
+                />
+                <input
+                  className="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Description"
+                  value={link.description ?? ''}
+                  onChange={(e) => {
+                    const updated = [...(data.stepLinks ?? [])]
+                    updated[idx] = { ...updated[idx], description: e.target.value }
+                    patchNode({ stepLinks: updated })
+                  }}
+                />
+                {targetNode && (
+                  <div className="flex items-center gap-1 text-[10px] text-blue-500">
+                    <ArrowRight size={8} />
+                    <span className="font-medium">{(targetNode.data as PLCNodeData).label || targetNode.id}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
         {/* ── Cross-diagram Anchor ─────────────────────────────────────── */}
         <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">

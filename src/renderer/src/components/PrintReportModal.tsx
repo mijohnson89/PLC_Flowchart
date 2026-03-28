@@ -395,7 +395,7 @@ function SequenceSection({ tab, opts }: { tab: DiagramTab; opts: TabReportOption
                     <th style={TH}>To</th>
                     <th style={TH}>Label</th>
                     <th style={TH}>Type</th>
-                    <th style={TH}>Note</th>
+                    <th style={TH}>Description</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -735,7 +735,7 @@ function ReportDocument({ options }: { options: ReportOptions }) {
     ioSlots,
     ioEntries,
     tasks,
-    taskNotes,
+    noteItems,
     alarms,
   } = useDiagramStore()
 
@@ -1134,13 +1134,28 @@ function ReportDocument({ options }: { options: ReportOptions }) {
       )}
 
       {/* ── Notes ── */}
-      {options.showNotes && taskNotes && taskNotes.trim() !== '' && (
+      {options.showNotes && noteItems.filter((n) => n.type === 'note' && n.content?.trim()).length > 0 && (
         <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
           <h2 style={SECTION_HEADING}>Notes</h2>
-          <div
-            style={{ fontSize: '10px', lineHeight: '1.6' }}
-            dangerouslySetInnerHTML={{ __html: taskNotes }}
-          />
+          {noteItems.filter((n) => n.type === 'note' && n.content?.trim()).map((n) => (
+            <div key={n.id} style={{ marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '11px', fontWeight: 700, margin: '8px 0 4px' }}>{n.name}</h3>
+              <div
+                style={{ fontSize: '10px', lineHeight: '1.6' }}
+                dangerouslySetInnerHTML={{ __html: n.content! }}
+              />
+            </div>
+          ))}
+          {noteItems.filter((n) => n.type === 'link' && n.url?.trim()).length > 0 && (
+            <>
+              <h3 style={{ fontSize: '11px', fontWeight: 700, margin: '12px 0 4px' }}>Reference Links</h3>
+              <ul style={{ fontSize: '10px', lineHeight: '1.6', paddingLeft: '16px' }}>
+                {noteItems.filter((n) => n.type === 'link' && n.url?.trim()).map((n) => (
+                  <li key={n.id}>{n.name} — {n.url}</li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1154,7 +1169,7 @@ interface Props {
 }
 
 export function PrintReportModal({ onClose }: Props) {
-  const { projectName, tabs, userInterfaces, interfaceInstances, plants, ioRacks, ioSlots, ioEntries, tasks, alarms, taskNotes } = useDiagramStore()
+  const { projectName, tabs, userInterfaces, interfaceInstances, plants, ioRacks, ioSlots, ioEntries, tasks, alarms, noteItems } = useDiagramStore()
 
   const flowchartTabs = tabs.filter((t) => t.type === 'flowchart')
   const sequenceTabs = tabs.filter((t) => t.type === 'sequence')
@@ -1375,7 +1390,7 @@ export function PrintReportModal({ onClose }: Props) {
                 checked={options.showNotes}
                 onChange={(v) => setOptions((p) => ({ ...p, showNotes: v }))}
                 label="Notes"
-                hint={taskNotes ? 'Rich text notes attached to the project' : 'No notes written yet'}
+                hint={noteItems.length > 0 ? `${noteItems.length} note item(s) in project` : 'No notes yet'}
               />
             </OptionGroup>
 

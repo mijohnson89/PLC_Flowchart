@@ -1,11 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Pencil, Check,
   Network, AlignJustify, Link2, Unlink,
   ClipboardList, CheckSquare, Square,
-  Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
-  Heading1, Heading2, Strikethrough, StickyNote, Minus,
-  Zap, Server, Cpu, Tag, ExternalLink, EyeOff, Eye, Link
+  Zap, Server, Cpu, Tag, ExternalLink, EyeOff, Eye
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { Task, SubTask, TaskAutoGenSettings } from '../types'
@@ -670,274 +668,6 @@ function Stats({ tasks }: { tasks: Task[] }) {
   )
 }
 
-// ── Rich text notes ──────────────────────────────────────────────────────────
-
-function ToolbarBtn({ active, onClick, title, children }: {
-  active?: boolean
-  onClick: () => void
-  title: string
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onMouseDown={(e) => { e.preventDefault(); onClick() }}
-      title={title}
-      className={`p-1 rounded transition-colors ${
-        active
-          ? 'bg-indigo-100 text-indigo-700'
-          : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
-function RichTextNotes() {
-  const taskNotes = useDiagramStore((s) => s.taskNotes)
-  const setTaskNotes = useDiagramStore((s) => s.setTaskNotes)
-  const editorRef = useRef<HTMLDivElement>(null)
-  const isInternalChange = useRef(false)
-  const [linkPrompt, setLinkPrompt] = useState<{ show: boolean; url: string; text: string }>({ show: false, url: '', text: '' })
-  const savedSelection = useRef<Range | null>(null)
-  const linkUrlRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (editorRef.current && !isInternalChange.current) {
-      if (editorRef.current.innerHTML !== taskNotes) {
-        editorRef.current.innerHTML = taskNotes
-      }
-    }
-    isInternalChange.current = false
-  }, [taskNotes])
-
-  const exec = useCallback((command: string, value?: string) => {
-    document.execCommand(command, false, value)
-    editorRef.current?.focus()
-  }, [])
-
-  const handleInput = useCallback(() => {
-    if (editorRef.current) {
-      isInternalChange.current = true
-      setTaskNotes(editorRef.current.innerHTML)
-    }
-  }, [setTaskNotes])
-
-  const isActive = (command: string) => document.queryCommandState(command)
-
-  const [, forceUpdate] = useState(0)
-  const trackSelection = useCallback(() => forceUpdate((n) => n + 1), [])
-
-  const openLinkPrompt = useCallback(() => {
-    const sel = window.getSelection()
-    if (sel && sel.rangeCount > 0) {
-      savedSelection.current = sel.getRangeAt(0).cloneRange()
-    }
-    const selectedText = sel?.toString() ?? ''
-    const parentAnchor = sel?.anchorNode?.parentElement?.closest('a')
-    setLinkPrompt({
-      show: true,
-      url: parentAnchor?.getAttribute('href') ?? '',
-      text: selectedText || parentAnchor?.textContent || ''
-    })
-    setTimeout(() => linkUrlRef.current?.focus(), 50)
-  }, [])
-
-  const insertLink = useCallback(() => {
-    let url = linkPrompt.url.trim()
-    if (!url) { setLinkPrompt({ show: false, url: '', text: '' }); return }
-    if (!/^https?:\/\//i.test(url)) url = 'https://' + url
-
-    if (savedSelection.current) {
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(savedSelection.current)
-    }
-
-    const sel = window.getSelection()
-    const text = linkPrompt.text.trim() || url
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0)
-      if (range.collapsed && !sel.toString()) {
-        const a = document.createElement('a')
-        a.href = url
-        a.textContent = text
-        a.target = '_blank'
-        a.rel = 'noopener noreferrer'
-        range.insertNode(a)
-        range.setStartAfter(a)
-        range.collapse(true)
-        sel.removeAllRanges()
-        sel.addRange(range)
-      } else {
-        document.execCommand('createLink', false, url)
-        const anchor = sel.anchorNode?.parentElement?.closest('a') ?? editorRef.current?.querySelector(`a[href="${url}"]`)
-        if (anchor) {
-          anchor.setAttribute('target', '_blank')
-          anchor.setAttribute('rel', 'noopener noreferrer')
-        }
-      }
-    }
-    handleInput()
-    setLinkPrompt({ show: false, url: '', text: '' })
-    savedSelection.current = null
-    editorRef.current?.focus()
-  }, [linkPrompt, handleInput])
-
-  const removeLink = useCallback(() => {
-    if (savedSelection.current) {
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(savedSelection.current)
-    }
-    document.execCommand('unlink')
-    handleInput()
-    setLinkPrompt({ show: false, url: '', text: '' })
-    savedSelection.current = null
-    editorRef.current?.focus()
-  }, [handleInput])
-
-  const handleEditorClick = useCallback((e: React.MouseEvent) => {
-    const anchor = (e.target as HTMLElement).closest('a')
-    if (anchor && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault()
-      window.open(anchor.getAttribute('href') ?? '', '_blank', 'noopener,noreferrer')
-    }
-  }, [])
-
-  const hasLinkAtCursor = (() => {
-    const sel = window.getSelection()
-    return !!sel?.anchorNode?.parentElement?.closest('a')
-  })()
-
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Toolbar */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-gray-200 bg-white flex-shrink-0 flex-wrap">
-        <ToolbarBtn active={isActive('bold')} onClick={() => exec('bold')} title="Bold (Ctrl+B)">
-          <Bold size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn active={isActive('italic')} onClick={() => exec('italic')} title="Italic (Ctrl+I)">
-          <Italic size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn active={isActive('underline')} onClick={() => exec('underline')} title="Underline (Ctrl+U)">
-          <UnderlineIcon size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn active={isActive('strikeThrough')} onClick={() => exec('strikeThrough')} title="Strikethrough">
-          <Strikethrough size={13} />
-        </ToolbarBtn>
-
-        <div className="w-px h-4 bg-gray-200 mx-0.5" />
-
-        <ToolbarBtn onClick={() => exec('formatBlock', '<h1>')} title="Heading 1">
-          <Heading1 size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('formatBlock', '<h2>')} title="Heading 2">
-          <Heading2 size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('formatBlock', '<p>')} title="Normal text">
-          <span className="text-[10px] font-bold leading-none">P</span>
-        </ToolbarBtn>
-
-        <div className="w-px h-4 bg-gray-200 mx-0.5" />
-
-        <ToolbarBtn active={isActive('insertUnorderedList')} onClick={() => exec('insertUnorderedList')} title="Bullet list">
-          <List size={13} />
-        </ToolbarBtn>
-        <ToolbarBtn active={isActive('insertOrderedList')} onClick={() => exec('insertOrderedList')} title="Numbered list">
-          <ListOrdered size={13} />
-        </ToolbarBtn>
-
-        <div className="w-px h-4 bg-gray-200 mx-0.5" />
-
-        <ToolbarBtn onClick={() => exec('insertHorizontalRule')} title="Horizontal rule">
-          <Minus size={13} />
-        </ToolbarBtn>
-
-        <div className="w-px h-4 bg-gray-200 mx-0.5" />
-
-        <ToolbarBtn active={hasLinkAtCursor} onClick={openLinkPrompt} title="Insert / edit link">
-          <Link size={13} />
-        </ToolbarBtn>
-      </div>
-
-      {/* Link prompt */}
-      {linkPrompt.show && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
-          <Link size={11} className="text-indigo-500 flex-shrink-0" />
-          <input
-            ref={linkUrlRef}
-            type="text"
-            placeholder="https://example.com"
-            value={linkPrompt.url}
-            onChange={(e) => setLinkPrompt((p) => ({ ...p, url: e.target.value }))}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') insertLink()
-              if (e.key === 'Escape') { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }
-            }}
-            className="flex-1 text-xs border border-indigo-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-          />
-          <input
-            type="text"
-            placeholder="Display text (optional)"
-            value={linkPrompt.text}
-            onChange={(e) => setLinkPrompt((p) => ({ ...p, text: e.target.value }))}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') insertLink()
-              if (e.key === 'Escape') { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }
-            }}
-            className="w-40 text-xs border border-indigo-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-          />
-          <button
-            onClick={insertLink}
-            disabled={!linkPrompt.url.trim()}
-            className="px-2 py-1 text-[10px] font-semibold text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-          >
-            Apply
-          </button>
-          {hasLinkAtCursor && (
-            <button
-              onClick={removeLink}
-              className="px-2 py-1 text-[10px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100 transition-colors"
-            >
-              Remove
-            </button>
-          )}
-          <button
-            onClick={() => { setLinkPrompt({ show: false, url: '', text: '' }); savedSelection.current = null; editorRef.current?.focus() }}
-            className="p-1 text-gray-400 hover:text-gray-600 rounded"
-          >
-            <Minus size={11} />
-          </button>
-        </div>
-      )}
-
-      {/* Editor */}
-      <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        onInput={handleInput}
-        onSelect={trackSelection}
-        onKeyUp={trackSelection}
-        onMouseUp={trackSelection}
-        onClick={handleEditorClick}
-        className="flex-1 overflow-y-auto px-4 py-3 text-sm text-gray-700 focus:outline-none prose prose-sm max-w-none
-          [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-gray-900 [&_h1]:mb-2 [&_h1]:mt-3
-          [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-gray-800 [&_h2]:mb-1.5 [&_h2]:mt-2
-          [&_p]:mb-1.5 [&_p]:leading-relaxed
-          [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2
-          [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2
-          [&_li]:mb-0.5
-          [&_hr]:my-3 [&_hr]:border-gray-200
-          [&_a]:text-indigo-600 [&_a]:underline [&_a]:decoration-indigo-300 [&_a]:hover:text-indigo-800 [&_a]:hover:decoration-indigo-500 [&_a]:cursor-pointer"
-        data-placeholder="Write your notes here…"
-        style={{ minHeight: 80 }}
-      />
-    </div>
-  )
-}
-
 // ── Auto-gen settings popover ─────────────────────────────────────────────────
 
 const AUTO_GEN_RULES: { key: keyof TaskAutoGenSettings; label: string; desc: string }[] = [
@@ -1001,10 +731,8 @@ export function TasksPanel() {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const addRef = useRef<HTMLInputElement>(null)
-  const [notesPct, setNotesPct] = useState(35)
   const [showAutoGen, setShowAutoGen] = useState(false)
   const [hideCompleted, setHideCompleted] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
   const autoGen = useDiagramStore((s) => s.taskAutoGen)
   const anyAutoGenOn = autoGen.ioCardFAT || autoGen.analogSAT || autoGen.sequenceTesting || autoGen.deviceTesting || autoGen.alarmTesting
 
@@ -1023,29 +751,8 @@ export function TasksPanel() {
     }
   }
 
-  const handleDividerDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    let lastY = e.clientY
-    const target = e.currentTarget
-    target.setPointerCapture(e.pointerId)
-    const onMove = (ev: PointerEvent) => {
-      if (!containerRef.current) return
-      const totalH = containerRef.current.getBoundingClientRect().height
-      if (totalH < 1) return
-      const deltaPct = ((ev.clientY - lastY) / totalH) * 100
-      lastY = ev.clientY
-      setNotesPct((prev) => Math.min(70, Math.max(15, prev - deltaPct)))
-    }
-    const onUp = () => {
-      target.removeEventListener('pointermove', onMove)
-      target.removeEventListener('pointerup', onUp)
-    }
-    target.addEventListener('pointermove', onMove)
-    target.addEventListener('pointerup', onUp)
-  }, [])
-
   return (
-    <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+    <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-4 bg-white border-b border-gray-200 flex-shrink-0">
         <div className="p-2 bg-indigo-100 rounded-lg">
@@ -1095,7 +802,7 @@ export function TasksPanel() {
       </div>
 
       {/* Task list */}
-      <div className="overflow-y-auto px-5 py-4 space-y-3" style={{ flexBasis: `${100 - notesPct}%`, flexGrow: 0, flexShrink: 0 }}>
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
         {adding && (
           <div className="bg-white rounded-xl border-2 border-indigo-300 shadow-sm p-3 flex items-center gap-2">
             <input
@@ -1150,23 +857,6 @@ export function TasksPanel() {
             {completedCount} completed task{completedCount !== 1 ? 's' : ''} hidden
           </p>
         )}
-      </div>
-
-      {/* Resize divider */}
-      <div
-        className="h-1.5 cursor-row-resize flex-shrink-0 bg-gray-200 hover:bg-indigo-400 active:bg-indigo-500 transition-colors relative group"
-        onPointerDown={handleDividerDrag}
-      >
-        <div className="absolute inset-x-0 -top-1 -bottom-1" />
-      </div>
-
-      {/* Notes panel */}
-      <div className="flex flex-col min-h-0 bg-white border-t border-gray-200" style={{ flexBasis: `${notesPct}%`, flexGrow: 0, flexShrink: 0 }}>
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border-b border-amber-100 flex-shrink-0">
-          <StickyNote size={12} className="text-amber-600" />
-          <span className="text-xs font-semibold text-amber-800">Notes</span>
-        </div>
-        <RichTextNotes />
       </div>
     </div>
   )

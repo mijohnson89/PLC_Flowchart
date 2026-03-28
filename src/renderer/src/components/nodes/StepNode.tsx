@@ -22,6 +22,7 @@ export function StepNode({ data, selected }: NodeProps<{ data: PLCNodeData }>) {
       stateTag={stateTag}
       linkedTabId={d.linkedTabId}
       linkedNodeId={d.linkedNodeId}
+      stepLinks={d.stepLinks}
     />
   )
 }

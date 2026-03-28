@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2, BellRing } from 'lucide-react'
+import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2, BellRing, FileText } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { DiagramMode, DiagramTab } from '../types'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
   flowchart: <Network size={12} />,
@@ -106,6 +106,7 @@ export function TabBar() {
   const isTasksActive = activeTabId === TASKS_TAB_ID
   const isIOTableActive = activeTabId === IO_TABLE_TAB_ID
   const isAlarmsActive = activeTabId === ALARMS_TAB_ID
+  const isNotesActive = activeTabId === NOTES_TAB_ID
   const openTabs = openTabIds
     .map((id) => tabs.find((t) => t.id === id))
     .filter((t): t is DiagramTab => t !== undefined)
@@ -229,6 +230,25 @@ export function TabBar() {
             <BellRing size={12} />
           </span>
           <span>Alarms</span>
+        </div>
+
+        {/* Static Notes tab */}
+        <div
+          onClick={() => setActiveTab(NOTES_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isNotesActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Notes — documents, links and reference files"
+        >
+          <span className={isNotesActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <FileText size={12} />
+          </span>
+          <span>Notes</span>
         </div>
 
         {/* Divider between static tabs and diagram tabs */}

@@ -1,6 +1,6 @@
 {
   "name": "plc-uml-generator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PLC Flowchart and UML Diagram Generator for Studio 5000",
   "main": "out/main/index.js",
   "scripts": {
@@ -16,11 +16,33 @@
       "output": "dist"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PLC UML Generator"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
     },
     "files": [
       "out/**/*"
-    ]
+    ],
+    "extraMetadata": {
+      "main": "out/main/index.js"
+    }
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

@@ -11,13 +11,15 @@ import type {
   TreeFolder,
   Task, SubTask, TaskAutoGenSettings,
   IORack, IOSlot, IOEntry,
-  FlowCondition, ConditionCause, ConditionAction,
+  FlowCondition, ConditionCause, ConditionAction, FlowPhase,
   Alarm,
+  NoteItem, NoteItemType, NoteFolder,
 } from '../types'
 import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
 
 const PROJECT_VERSION = '2.0'
 import { uid } from '../utils/uid'
+import { SEQUENCER_JUMP_STUB_PREFIX } from '../utils/sequencerFlowGraph'
 
 const DROP_GAP = 64
 
@@ -28,8 +30,9 @@ const PROTECTED_NODE_TYPES: PLCNodeType[] = ['start', 'end']
 function emptyTab(name: string, type: DiagramMode): DiagramTab {
   const flowNodes: PLCNode[] = type === 'flowchart'
     ? [
-        { id: uid('start'), type: 'start', position: { x: 200, y: 60  }, data: { label: 'Start' } as PLCNodeData },
-        { id: uid('end'),   type: 'end',   position: { x: 200, y: 520 }, data: { label: 'End'   } as PLCNodeData }
+        // Positions on 16px grid to match FlowchartCanvas snapGrid / Background
+        { id: uid('start'), type: 'start', position: { x: 208, y: 64 }, data: { label: 'Start' } as PLCNodeData },
+        { id: uid('end'),   type: 'end',   position: { x: 208, y: 528 }, data: { label: 'End'   } as PLCNodeData }
       ]
     : []
 
@@ -47,7 +50,9 @@ function emptyTab(name: string, type: DiagramMode): DiagramTab {
     revisions: [],
     pageSize: null,
     pageOrientation: 'portrait',
-    conditions: []
+    conditions: [],
+    phases: [],
+    sequencerViewPositions: {}
   }
 }
 
@@ -214,6 +219,10 @@ interface DiagramStore {
   setFlowEdges: (edges: PLCEdge[]) => void
   addNodeBelow: (type: PLCNodeType, label: string) => void
   setLastTouchedNodeId: (id: string | null) => void
+  /** Persist drag positions for the sequencer overview (steps/start + synthetic decision nodes). */
+  updateSequencerOverviewPosition: (nodeId: string, position: { x: number; y: number }) => void
+  /** Reset saved overview positions (e.g. after detecting overlapping layout). */
+  clearSequencerOverviewPositions: () => void
 
   // ── Sequence (operates on active tab) ─────────────────────────────────────
   addSeqActor: (actor: SequenceActor) => void
@@ -234,6 +243,11 @@ interface DiagramStore {
   addConditionCause: (conditionId: string, cause: ConditionCause) => void
   updateConditionCause: (conditionId: string, causeId: string, patch: Partial<Pick<ConditionCause, 'description' | 'linkedAlarmRef'>>) => void
   removeConditionCause: (conditionId: string, causeId: string) => void
+
+  // ── Phases (flowchart tab — assign steps to one or more phases) ────────────
+  addPhase: () => void
+  updatePhase: (id: string, patch: Partial<Pick<FlowPhase, 'name' | 'color'>>) => void
+  removePhase: (id: string) => void
 
   // ── Revision History ───────────────────────────────────────────────────────
   viewingRevisionId: string | null
@@ -325,6 +339,20 @@ interface DiagramStore {
   addAlarm: (alarm: Alarm) => void
   updateAlarm: (id: string, patch: Partial<Pick<Alarm, 'description'>>) => void
   removeAlarm: (id: string) => void
+
+  // ── Notes ─────────────────────────────────────────────────────────────────
+  noteItems: NoteItem[]
+  noteFolders: NoteFolder[]
+  activeNoteId: string | null
+  addNoteItem: (type: NoteItemType, name: string, extra?: Partial<Pick<NoteItem, 'content' | 'url' | 'filePath' | 'fileName' | 'folderId'>>) => string
+  updateNoteItem: (id: string, patch: Partial<Pick<NoteItem, 'name' | 'content' | 'url' | 'folderId'>>) => void
+  removeNoteItem: (id: string) => void
+  setActiveNoteId: (id: string | null) => void
+  addNoteFolder: (name: string, parentId?: string | null) => string
+  renameNoteFolder: (id: string, name: string) => void
+  removeNoteFolder: (id: string) => void
+  moveNoteItem: (itemId: string, targetFolderId: string | null, insertIndex: number) => void
+  moveNoteFolder: (folderId: string, targetParentId: string | null, insertIndex: number) => void
 
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => void
@@ -635,6 +663,33 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     set((s) => ({ tabs: patchActive(s.tabs, s.activeTabId, { flowEdges: edges }), isDirty: true }))
   },
 
+  updateSequencerOverviewPosition: (nodeId, position) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      const prev = tab.sequencerViewPositions ?? {}
+      const withoutJumps = Object.fromEntries(
+        Object.entries(prev).filter(([k]) => !k.startsWith(SEQUENCER_JUMP_STUB_PREFIX))
+      )
+      const sequencerViewPositions = { ...withoutJumps, [nodeId]: position }
+      const flowNodes = tab.flowNodes.map((n) =>
+        n.id === nodeId ? { ...n, position: { ...position } } : n
+      )
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, { flowNodes, sequencerViewPositions }),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
+  },
+
+  clearSequencerOverviewPositions: () => {
+    set((s) => ({
+      tabs: patchActive(s.tabs, s.activeTabId, { sequencerViewPositions: {} }),
+      isDirty: true
+    }))
+  },
+
   setLastTouchedNodeId: (id) => {
     set((s) => ({ tabs: patchActive(s.tabs, s.activeTabId, { lastTouchedNodeId: id }) }))
   },
@@ -854,6 +909,57 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         isDirty: true
       }
     })
+  },
+
+  addPhase: () => {
+    const { tabs, activeTabId, pushHistory } = get()
+    const tab = tabs.find((t) => t.id === activeTabId)
+    if (!tab || tab.type !== 'flowchart') return
+    const presets = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316']
+    const phases = tab.phases ?? []
+    const phase: FlowPhase = {
+      id: uid('phase'),
+      name: `Phase ${phases.length + 1}`,
+      color: presets[phases.length % presets.length]
+    }
+    set((s) => ({
+      tabs: patchActive(s.tabs, s.activeTabId, { phases: [...phases, phase] }),
+      isDirty: true
+    }))
+    pushHistory()
+  },
+
+  updatePhase: (id, patch) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      const phases = (tab.phases ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p))
+      return { tabs: patchActive(s.tabs, s.activeTabId, { phases }), isDirty: true }
+    })
+  },
+
+  removePhase: (id) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      const phases = (tab.phases ?? []).filter((p) => p.id !== id)
+      const flowNodes = tab.flowNodes.map((n) => {
+        if (n.type !== 'step') return n
+        const d = n.data as PLCNodeData
+        const cur = d.phaseIds ?? []
+        const next = cur.filter((pid) => pid !== id)
+        if (next.length === cur.length) return n
+        return {
+          ...n,
+          data: { ...d, phaseIds: next.length ? next : undefined } as PLCNodeData
+        }
+      })
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, { phases, flowNodes }),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
   },
 
   // ── Revision History ───────────────────────────────────────────────────────
@@ -1325,6 +1431,143 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     set((s) => ({ alarms: s.alarms.filter((a) => a.id !== id), isDirty: true }))
   },
 
+  // ── Notes ─────────────────────────────────────────────────────────────────
+  noteItems: [],
+  noteFolders: [],
+  activeNoteId: null,
+
+  addNoteItem: (type, name, extra) => {
+    const now = new Date().toISOString()
+    const folderId = extra?.folderId ?? null
+    const sortIndex = get().noteItems.filter((n) => (n.folderId ?? null) === folderId).length
+    const item: NoteItem = {
+      id: uid('note'),
+      name,
+      type,
+      sortIndex,
+      createdAt: now,
+      updatedAt: now,
+      ...extra
+    }
+    set((s) => ({ noteItems: [...s.noteItems, item], activeNoteId: item.id, isDirty: true }))
+    return item.id
+  },
+
+  updateNoteItem: (id, patch) => {
+    set((s) => ({
+      noteItems: s.noteItems.map((n) =>
+        n.id === id ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n
+      ),
+      isDirty: true
+    }))
+  },
+
+  removeNoteItem: (id) => {
+    set((s) => ({
+      noteItems: s.noteItems.filter((n) => n.id !== id),
+      activeNoteId: s.activeNoteId === id ? null : s.activeNoteId,
+      isDirty: true
+    }))
+  },
+
+  setActiveNoteId: (id) => set({ activeNoteId: id }),
+
+  addNoteFolder: (name, parentId) => {
+    const id = uid('nfolder')
+    const sortIndex = get().noteFolders.filter((f) => f.parentId === (parentId ?? null)).length
+    set((s) => ({
+      noteFolders: [...s.noteFolders, { id, name, parentId: parentId ?? null, sortIndex }],
+      isDirty: true
+    }))
+    return id
+  },
+
+  renameNoteFolder: (id, name) => {
+    set((s) => ({
+      noteFolders: s.noteFolders.map((f) => f.id === id ? { ...f, name } : f),
+      isDirty: true
+    }))
+  },
+
+  removeNoteFolder: (id) => {
+    const collectIds = (rootId: string, folders: NoteFolder[]): Set<string> => {
+      const result = new Set<string>([rootId])
+      const stack = [rootId]
+      while (stack.length) {
+        const cur = stack.pop()!
+        for (const f of folders) {
+          if (f.parentId === cur && !result.has(f.id)) {
+            result.add(f.id)
+            stack.push(f.id)
+          }
+        }
+      }
+      return result
+    }
+    set((s) => {
+      const ids = collectIds(id, s.noteFolders)
+      return {
+        noteFolders: s.noteFolders.filter((f) => !ids.has(f.id)),
+        noteItems: s.noteItems.map((n) =>
+          n.folderId && ids.has(n.folderId) ? { ...n, folderId: null } : n
+        ),
+        isDirty: true
+      }
+    })
+  },
+
+  moveNoteItem: (itemId, targetFolderId, insertIndex) => {
+    set((s) => {
+      const dragged = s.noteItems.find((n) => n.id === itemId)
+      if (!dragged) return {}
+      const fid = targetFolderId ?? null
+      const siblings = s.noteItems
+        .filter((n) => n.id !== itemId && (n.folderId ?? null) === fid)
+        .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+      const idx = insertIndex < 0 ? siblings.length : Math.min(insertIndex, siblings.length)
+      siblings.splice(idx, 0, dragged)
+      const posMap = new Map<string, number>()
+      siblings.forEach((n, i) => posMap.set(n.id, i))
+      const now = new Date().toISOString()
+      return {
+        noteItems: s.noteItems.map((n) => {
+          const pos = posMap.get(n.id)
+          if (pos !== undefined) return { ...n, folderId: fid, sortIndex: pos, updatedAt: now }
+          return n
+        }),
+        isDirty: true
+      }
+    })
+  },
+
+  moveNoteFolder: (folderId, targetParentId, insertIndex) => {
+    set((s) => {
+      const folder = s.noteFolders.find((f) => f.id === folderId)
+      if (!folder) return {}
+      const isDescendant = (testId: string | null): boolean => {
+        if (!testId) return false
+        if (testId === folderId) return true
+        const p = s.noteFolders.find((f) => f.id === testId)
+        return p ? isDescendant(p.parentId) : false
+      }
+      if (isDescendant(targetParentId)) return {}
+      const pid = targetParentId ?? null
+      const siblings = s.noteFolders
+        .filter((f) => f.id !== folderId && (f.parentId ?? null) === pid)
+        .sort((a, b) => a.sortIndex - b.sortIndex)
+      const idx = insertIndex < 0 ? siblings.length : Math.min(insertIndex, siblings.length)
+      siblings.splice(idx, 0, folder)
+      return {
+        noteFolders: s.noteFolders.map((f) => {
+          const pos = siblings.findIndex((sib) => sib.id === f.id)
+          if (pos >= 0) return { ...f, parentId: pid, sortIndex: pos }
+          return f
+        }),
+        isDirty: true
+      }
+    })
+  },
+
   // ── Project I/O ────────────────────────────────────────────────────────────
   newProject: () => {
     const tabs = defaultTabs()
@@ -1355,7 +1598,10 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       tasks: [],
       taskNotes: '',
       taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true },
-      alarms: []
+      alarms: [],
+      noteItems: [],
+      noteFolders: [],
+      activeNoteId: null
     })
   },
 
@@ -1366,8 +1612,10 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     if (project.tabs) {
       tabs = project.tabs.map((t) => ({
         revisions: [], pageSize: null, pageOrientation: 'portrait' as PageOrientation,
-        folderId: null, sortIndex: 0, conditions: [],
-        ...t
+        folderId: null, sortIndex: 0, conditions: [], phases: [],
+        ...t,
+        phases: t.phases ?? [],
+        sequencerViewPositions: t.sequencerViewPositions ?? {}
       }))
       activeTabId = project.activeTabId ?? project.tabs[0]?.id
     } else {
@@ -1414,12 +1662,22 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       tasks: project.tasks ?? [],
       taskNotes: project.taskNotes ?? '',
       taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true, ...project.taskAutoGen },
-      alarms: project.alarms ?? []
+      alarms: project.alarms ?? [],
+      noteItems: (() => {
+        if (project.noteItems && project.noteItems.length > 0) return project.noteItems
+        if (project.taskNotes) {
+          const now = new Date().toISOString()
+          return [{ id: uid('note'), name: 'Task Notes (migrated)', type: 'note' as const, content: project.taskNotes, createdAt: now, updatedAt: now }]
+        }
+        return []
+      })(),
+      noteFolders: project.noteFolders ?? [],
+      activeNoteId: null
     })
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen, alarms } = get()
+    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen, alarms, noteItems, noteFolders } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
@@ -1442,7 +1700,9 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       tasks,
       taskNotes,
       taskAutoGen,
-      alarms
+      alarms,
+      noteItems,
+      noteFolders
     }
   }
 }))

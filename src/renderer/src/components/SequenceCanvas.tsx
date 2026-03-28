@@ -109,46 +109,59 @@ export function SequenceCanvas({ readOnly = false }: { readOnly?: boolean }) {
 
       {/* Add message form */}
       {addMsgOpen && !readOnly && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border-b border-emerald-200 flex-wrap flex-shrink-0">
-          <select
-            className="text-xs border border-gray-300 rounded px-2 py-1"
-            value={newMsg.fromId ?? ''}
-            onChange={(e) => setNewMsg((p) => ({ ...p, fromId: e.target.value }))}
-          >
-            <option value="">From actor...</option>
-            {seqActors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <ArrowRight size={14} className="text-gray-400" />
-          <select
-            className="text-xs border border-gray-300 rounded px-2 py-1"
-            value={newMsg.toId ?? ''}
-            onChange={(e) => setNewMsg((p) => ({ ...p, toId: e.target.value }))}
-          >
-            <option value="">To actor...</option>
-            {seqActors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <input
-            className="text-xs border border-gray-300 rounded px-2 py-1 flex-1 min-w-[120px]"
-            placeholder="Message label..."
-            value={newMsg.label ?? ''}
-            onChange={(e) => setNewMsg((p) => ({ ...p, label: e.target.value }))}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddMessage()}
-          />
-          <select
-            className="text-xs border border-gray-300 rounded px-2 py-1"
-            value={newMsg.type ?? 'sync'}
-            onChange={(e) => setNewMsg((p) => ({ ...p, type: e.target.value as MessageType }))}
-          >
-            {(Object.keys(MSG_STYLES) as MessageType[]).map((t) => (
-              <option key={t} value={t}>{MSG_STYLES[t].label}</option>
-            ))}
-          </select>
-          <button onClick={handleAddMessage} className="p-1 text-emerald-700 hover:text-emerald-900">
-            <Check size={15} />
-          </button>
-          <button onClick={() => setAddMsgOpen(false)} className="p-1 text-gray-400 hover:text-gray-700">
-            <X size={15} />
-          </button>
+        <div className="flex items-stretch gap-3 px-4 py-2 bg-emerald-50 border-b border-emerald-200 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <select
+              className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
+              value={newMsg.fromId ?? ''}
+              onChange={(e) => setNewMsg((p) => ({ ...p, fromId: e.target.value }))}
+            >
+              <option value="">From actor...</option>
+              {seqActors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <ArrowRight size={14} className="text-gray-400 shrink-0" />
+            <select
+              className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
+              value={newMsg.toId ?? ''}
+              onChange={(e) => setNewMsg((p) => ({ ...p, toId: e.target.value }))}
+            >
+              <option value="">To actor...</option>
+              {seqActors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <input
+              className="text-xs border border-gray-300 rounded px-2 py-1 w-[140px] bg-white"
+              placeholder="Message label..."
+              value={newMsg.label ?? ''}
+              onChange={(e) => setNewMsg((p) => ({ ...p, label: e.target.value }))}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAddMessage()}
+            />
+            <select
+              className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
+              value={newMsg.type ?? 'sync'}
+              onChange={(e) => setNewMsg((p) => ({ ...p, type: e.target.value as MessageType }))}
+            >
+              {(Object.keys(MSG_STYLES) as MessageType[]).map((t) => (
+                <option key={t} value={t}>{MSG_STYLES[t].label}</option>
+              ))}
+            </select>
+            <button type="button" onClick={handleAddMessage} className="p-1 text-emerald-700 hover:text-emerald-900 shrink-0" title="Add message">
+              <Check size={15} />
+            </button>
+            <button type="button" onClick={() => setAddMsgOpen(false)} className="p-1 text-gray-400 hover:text-gray-700 shrink-0" title="Cancel">
+              <X size={15} />
+            </button>
+          </div>
+          <div className="flex-1 min-w-[200px] max-w-xl flex flex-col gap-0.5 border-l border-emerald-200/80 pl-3">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-emerald-900/80">
+              Description
+            </label>
+            <textarea
+              className="text-xs border border-emerald-200 rounded-md px-2 py-1.5 w-full min-h-[52px] max-h-32 resize-y bg-white text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
+              placeholder="What happens in this step…"
+              value={newMsg.note ?? ''}
+              onChange={(e) => setNewMsg((p) => ({ ...p, note: e.target.value }))}
+            />
+          </div>
         </div>
       )}
 

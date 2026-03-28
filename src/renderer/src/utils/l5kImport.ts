@@ -1,5 +1,5 @@
 import { MarkerType } from '@xyflow/react'
-import type { AOIFieldUsage, InterfaceField, UserInterface, PLCNode, PLCEdge, IOType, IORack, IOSlot, IOEntry } from '../types'
+import type { AOIFieldUsage, InterfaceField, UserInterface, PLCNode, PLCEdge, PLCNodeData, StepLink, IOType, IORack, IOSlot, IOEntry } from '../types'
 import { uid } from './uid'
 
 function parseDescription(attrs: string): string | undefined {
@@ -204,9 +204,8 @@ export function parseL5KSequences(text: string, taskMap?: Map<string, string>): 
   const result: L5KSequence[] = []
   let i = 0
 
-  // Matches both Step_Current/Step_Next (newer) and Step_Index/Step_Buffer (older)
   const STEP_READ_FIELD  = '(?:Step_Current|Step_Index)'
-  const STEP_WRITE_FIELD = '(?:Step_Next|Step_Buffer|Step_Index|Step_Current)'
+  const STEP_WRITE_FIELD = '(?:Step_Buffer|Step_Next)'
 
   while (i < lines.length) {
     const progMatch = lines[i].match(/^\s*PROGRAM\s+([A-Za-z_][\w]*)\s*\(/i)
@@ -239,12 +238,12 @@ export function parseL5KSequences(text: string, taskMap?: Map<string, string>): 
           const rc = parseRcComment(line)
           if (rc) lastRc = rc
 
-          if (/Step_Current|Step_Next|Step_Index|Step_Buffer/.test(line)) {
-            // Generic regex: extract the tag name dynamically from the EQU pattern
+          if (/Step_Current|Step_Index/.test(line)) {
             const eqRe = new RegExp(`EQU\\(([A-Za-z_]\\w*)\\.${STEP_READ_FIELD}\\s*,\\s*(\\d+)\\)`, 'i')
             const eqMatch = line.match(eqRe)
             if (eqMatch) {
               const tagName = eqMatch[1]
+              if (/status/i.test(tagName)) { i++; continue }
               const fromStep = parseInt(eqMatch[2], 10)
 
               if (!routineStepMaps.has(tagName)) {
@@ -259,14 +258,12 @@ export function parseL5KSequences(text: string, taskMap?: Map<string, string>): 
 
               const tagEsc = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
               const movRe = new RegExp(`MOV\\(\\s*(\\d+)\\s*,\\s*${tagEsc}\\.${STEP_WRITE_FIELD}\\s*\\)`, 'gi')
-              const clrRe = new RegExp(`CLR\\(\\s*${tagEsc}\\.${STEP_WRITE_FIELD}\\s*\\)`, 'gi')
 
               const toSteps: number[] = []
               let m
               while ((m = movRe.exec(line)) !== null) {
                 toSteps.push(parseInt(m[1], 10))
               }
-              if (clrRe.test(line)) toSteps.push(0)
 
               for (const toStep of toSteps) {
                 if (!entry.transitions.some((t) => t.toStep === toStep)) {
@@ -367,7 +364,11 @@ export function l5kSequenceToFlowchart(seq: L5KSequence): { nodes: PLCNode[]; ed
         stepNumber: s.stepNumber,
         description: s.transitions.map((t) =>
           t.condition ? `→ ${t.toStep} when ${t.condition}` : `→ ${t.toStep}`
-        ).join('; ')
+        ).join('; '),
+        actions: s.transitions
+          .map((t) => [t.description, t.condition].filter(Boolean).join(' — '))
+          .filter(Boolean)
+          .join(' | ') || undefined
       }
     })
   })
@@ -392,6 +393,8 @@ export function l5kSequenceToFlowchart(seq: L5KSequence): { nodes: PLCNode[]; ed
   const stepIndex = new Map<number, number>()
   sortedSteps.forEach((s, idx) => stepIndex.set(s.stepNumber, idx))
 
+  const stepLinksMap = new Map<string, StepLink[]>()
+
   for (const s of sortedSteps) {
     const sourceId = stepIdMap.get(s.stepNumber)
     if (!sourceId) continue
@@ -408,39 +411,40 @@ export function l5kSequenceToFlowchart(seq: L5KSequence): { nodes: PLCNode[]; ed
           markerEnd: arrow,
           data: { condition: t.condition }
         })
-      } else {
-        const targetId = stepIdMap.get(t.toStep)
-        if (!targetId) continue
-        const tgtIdx = stepIndex.get(t.toStep) ?? 0
-        const isBackward = tgtIdx <= srcIdx
+        continue
+      }
 
-        if (isBackward) {
-          edges.push({
-            id: nodeId('edge'),
-            source: sourceId,
-            sourceHandle: 'right-source',
-            target: targetId,
-            targetHandle: 'right-target',
-            type: 'smoothstep',
-            label: t.condition,
-            markerEnd: arrow,
-            animated: true,
-            style: { strokeDasharray: '6 3' },
-            data: { condition: t.condition }
-          })
-        } else {
-          edges.push({
-            id: nodeId('edge'),
-            source: sourceId,
-            target: targetId,
-            type: 'editable',
-            label: t.condition,
-            markerEnd: arrow,
-            data: { condition: t.condition }
-          })
-        }
+      const targetId = stepIdMap.get(t.toStep)
+      if (!targetId) continue
+      const tgtIdx = stepIndex.get(t.toStep) ?? 0
+      const isBackward = tgtIdx <= srcIdx
+      const isLargeJump = t.toStep - s.stepNumber > 10
+
+      if (isBackward || isLargeJump) {
+        const links = stepLinksMap.get(sourceId) ?? []
+        links.push({
+          id: nodeId('sl'),
+          targetNodeId: targetId,
+          reason: t.condition || (isBackward ? `Back to step ${t.toStep}` : `Jump to step ${t.toStep}`)
+        })
+        stepLinksMap.set(sourceId, links)
+      } else {
+        edges.push({
+          id: nodeId('edge'),
+          source: sourceId,
+          target: targetId,
+          type: 'editable',
+          label: t.condition,
+          markerEnd: arrow,
+          data: { condition: t.condition }
+        })
       }
     }
+  }
+
+  for (const [nid, links] of stepLinksMap) {
+    const node = nodes.find((n) => n.id === nid)
+    if (node) (node.data as PLCNodeData).stepLinks = links
   }
 
   return { nodes, edges }

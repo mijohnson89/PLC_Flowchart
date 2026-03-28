@@ -2,6 +2,9 @@ import type { Node, Edge } from '@xyflow/react'
 
 export type DiagramMode = 'flowchart' | 'sequence'
 
+/** Assignable content for the main flowchart diagram split (left / right). */
+export type DiagramPaneContent = 'stepMatrix' | 'flowOverview' | 'causeEffect' | 'conditions'
+
 // ── PLC Node Types ───────────────────────────────────────────────────────────
 
 export type PLCNodeType =
@@ -13,6 +16,14 @@ export type PLCNodeType =
   | 'actor'
   | 'transition'
   | 'note'
+
+export interface StepLink {
+  id: string
+  targetNodeId: string
+  reason?: string
+  /** Human-readable notes for this jump (matrix / reports). */
+  description?: string
+}
 
 export interface PLCNodeData extends Record<string, unknown> {
   label: string
@@ -27,12 +38,18 @@ export interface PLCNodeData extends Record<string, unknown> {
   routineName?: string     // for process nodes
   linkedTabId?: string     // cross-diagram anchor: target tab ID
   linkedNodeId?: string    // cross-diagram anchor: target node ID within that tab (optional)
+  stepLinks?: StepLink[]   // embedded references to other nodes on the same diagram
+  actions?: string        // outputs / coil actions description for matrix row
+  /** Flow phase IDs from the active tab; a step may belong to multiple phases. */
+  phaseIds?: string[]
 }
 
 export type PLCNode = Node<PLCNodeData, PLCNodeType>
 export interface PLCEdgeData extends Record<string, unknown> {
   label?: string
   condition?: string
+  /** Notes for this jump when edited from the step matrix. */
+  description?: string
   waypoints?: { x: number; y: number }[]
 }
 
@@ -302,6 +319,34 @@ export interface Alarm {
   description: string
 }
 
+// ── Notes ────────────────────────────────────────────────────────────────────
+
+export const NOTES_TAB_ID = '__notes__'
+
+export type NoteItemType = 'note' | 'file' | 'link'
+
+export interface NoteFolder {
+  id: string
+  name: string
+  parentId: string | null
+  sortIndex: number
+}
+
+export interface NoteItem {
+  id: string
+  name: string
+  type: NoteItemType
+  folderId?: string | null
+  sortIndex?: number
+  createdAt: string
+  updatedAt: string
+  content?: string        // rich-text HTML for 'note' type
+  url?: string            // URL for 'link' type
+  /** Relative path inside the companion _files folder (for 'file' type) */
+  filePath?: string
+  fileName?: string       // original filename for display
+}
+
 // ── Flowchart Conditions ──────────────────────────────────────────────────────
 
 export type ConditionAction = 'pause' | 'stop' | 'abort'
@@ -318,6 +363,14 @@ export interface FlowCondition {
   action: ConditionAction
   causes: ConditionCause[]
   linkedAlarmRef?: string   // "alarm:{alarmId}" or "field:{interfaceId}:{fieldId}"
+}
+
+/** Named phase for a flowchart sequence (e.g. Cleaning, Discharge). Steps can belong to many. */
+export interface FlowPhase {
+  id: string
+  name: string
+  /** Optional UI chip color (hex). */
+  color?: string
 }
 
 // ── Cause & Effect Matrix ─────────────────────────────────────────────────────
@@ -354,6 +407,13 @@ export interface DiagramTab {
   pageSize: PageSizeKey | null
   pageOrientation: PageOrientation
   conditions: FlowCondition[]
+  /** Per flowchart tab: phases that can be assigned to steps. */
+  phases?: FlowPhase[]
+  /**
+   * Extra positions for the sequencer overview (read-only flowchart beside the matrix).
+   * Keys are flow node ids (start/steps) for the overview canvas.
+   */
+  sequencerViewPositions?: Record<string, { x: number; y: number }>
 }
 
 // ── Project ──────────────────────────────────────────────────────────────────
@@ -382,6 +442,8 @@ export interface DiagramProject {
   taskNotes?: string
   taskAutoGen?: TaskAutoGenSettings
   alarms?: Alarm[]
+  noteItems?: NoteItem[]
+  noteFolders?: NoteFolder[]
 }
 
 // ── Electron API ─────────────────────────────────────────────────────────────
@@ -396,6 +458,9 @@ export interface ElectronAPI {
   saveLibrary: (items: UserInterface[]) => Promise<boolean>
   importInterfaces: () => Promise<UserInterface[] | null>
   exportInterfaces: (items: UserInterface[], defaultName?: string) => Promise<boolean>
+  importNoteFile: (projectPath?: string) => Promise<{ fileName: string; relativePath: string } | null>
+  openNoteFile: (relativePath: string, projectPath?: string) => Promise<boolean>
+  deleteNoteFile: (relativePath: string, projectPath?: string) => Promise<boolean>
 }
 
 declare global {

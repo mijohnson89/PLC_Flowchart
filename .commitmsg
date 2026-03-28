@@ -1,5 +1,0 @@
-Excel Export
-
-- Rework export to produce IO tab + one C&E matrix tab per flowchart
-- Fix IPC serialisation by using base64 encoding instead of Uint8Array
-- Add error handling to export handler

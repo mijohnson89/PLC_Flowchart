@@ -9,11 +9,11 @@ import { PACKML_STATES } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isNumericType(dt: string): boolean {
+export function isNumericType(dt: string): boolean {
   return /^(SINT|INT|DINT|LINT|USINT|UINT|UDINT|ULINT|REAL|LREAL|BYTE|WORD|DWORD)/.test(dt)
 }
 
-function isControllableField(field: InterfaceField, ifaceType: InterfaceType): boolean {
+export function isControllableField(field: InterfaceField, ifaceType: InterfaceType): boolean {
   if (field.includeInMatrix !== undefined) return field.includeInMatrix
   if (ifaceType === 'UDT') return true
   return field.usage === 'Input' || field.usage === 'InOut'
@@ -21,7 +21,7 @@ function isControllableField(field: InterfaceField, ifaceType: InterfaceType): b
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface MatrixCol {
+export interface MatrixCol {
   key: string
   interfaceId: string
   interfaceName: string
@@ -42,7 +42,7 @@ interface MatrixRow {
   packMLState?: PackMLState
 }
 
-interface SidebarInstance {
+export interface SidebarInstance {
   instanceId: string
   instanceName: string
   tagName: string
@@ -57,7 +57,7 @@ interface SidebarInstance {
 
 interface Span<T> { data: T; count: number }
 
-function computeSpans<T, K>(items: T[], keyFn: (item: T) => K): Span<T>[] {
+export function computeSpans<T, K>(items: T[], keyFn: (item: T) => K): Span<T>[] {
   const spans: Span<T>[] = []
   items.forEach((item) => {
     const key = keyFn(item)
@@ -70,7 +70,7 @@ function computeSpans<T, K>(items: T[], keyFn: (item: T) => K): Span<T>[] {
 
 // ── Bool cell ─────────────────────────────────────────────────────────────────
 
-function BoolCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: MatrixCellValue) => void }) {
+export function BoolCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: MatrixCellValue) => void }) {
   const isOn  = value === true
   const isOff = value === false
   function cycle() {
@@ -97,7 +97,7 @@ function BoolCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: M
 
 // ── Numeric cell ──────────────────────────────────────────────────────────────
 
-function NumericCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: MatrixCellValue) => void }) {
+export function NumericCell({ value, onChange }: { value: MatrixCellValue; onChange: (v: MatrixCellValue) => void }) {
   return (
     <input
       type="number"
@@ -120,7 +120,7 @@ function NumericCell({ value, onChange }: { value: MatrixCellValue; onChange: (v
 
 // ── PackML badge ──────────────────────────────────────────────────────────────
 
-function PackMLBadge({ state }: { state: PackMLState }) {
+export function PackMLBadge({ state }: { state: PackMLState }) {
   const def = PACKML_STATES[state]
   if (!def) return null
   return (
@@ -346,7 +346,7 @@ function AreaSection({
 
 // ── Instance sidebar ──────────────────────────────────────────────────────────
 
-function InstanceSidebar({
+export function InstanceSidebar({
   sidebarInstances,
   hiddenInstanceIds,
   usedInstanceIds,
@@ -370,11 +370,6 @@ function InstanceSidebar({
     () => Object.fromEntries(locations.map((l) => [l.id, l.name])),
     [locations]
   )
-  const areaNames = useMemo(
-    () => Object.fromEntries(areas.map((a) => [a.id, a.name])),
-    [areas]
-  )
-
   // Instance groups: assigned (by plant/area/location) and unassigned
   const assignedInstances   = sidebarInstances.filter((i) => i.locationId)
   const unassignedInstances = sidebarInstances.filter((i) => !i.locationId)

@@ -1,7 +1,7 @@
 import { Handle, Position } from '@xyflow/react'
-import { Link2 } from 'lucide-react'
-import type { PackMLCategory } from '../../types'
-import { useDiagramStore } from '../../store/diagramStore'
+import { Link2, ArrowRight } from 'lucide-react'
+import type { PackMLCategory, StepLink, PLCNodeData } from '../../types'
+import { useDiagramStore, selectFlowNodes } from '../../store/diagramStore'
 
 export interface StateTag {
   label: string
@@ -12,26 +12,28 @@ export interface StateTag {
 }
 
 export interface BaseNodeConfig {
-  color: string          // accent color (hex)
-  typeLabel: string      // e.g. "STEP", "OUTPUT"
+  color: string
+  typeLabel: string
   selected?: boolean
   label: string
-  sublabel?: string      // secondary line (condition, tag, routine…)
-  badge?: string         // small top-left badge (e.g. step number)
-  stateTag?: StateTag    // PackML state badge (step nodes only)
-  leftHandles?: boolean  // add left + right handles (for actor)
-  noTarget?: boolean     // start node has no target
-  noSource?: boolean     // end node has no source
-  linkedTabId?: string   // cross-diagram anchor target tab
-  linkedNodeId?: string  // cross-diagram anchor target node (optional)
+  sublabel?: string
+  badge?: string
+  stateTag?: StateTag
+  leftHandles?: boolean
+  noTarget?: boolean
+  noSource?: boolean
+  linkedTabId?: string
+  linkedNodeId?: string
+  stepLinks?: StepLink[]
 }
 
 export function BaseNode({
   color, typeLabel, selected,
   label, sublabel, badge, stateTag,
   leftHandles, noTarget, noSource,
-  linkedTabId, linkedNodeId
+  linkedTabId, linkedNodeId, stepLinks
 }: BaseNodeConfig) {
+  const flowNodes = useDiagramStore(selectFlowNodes)
   const selectionRing = selected
     ? 'ring-2 ring-offset-1 ring-blue-400'
     : ''
@@ -44,12 +46,26 @@ export function BaseNode({
     if (linkedNodeId) store.setPendingFocusNodeId(linkedNodeId)
   }
 
+  function handleStepLinkClick(e: React.MouseEvent, targetNodeId: string) {
+    e.stopPropagation()
+    const store = useDiagramStore.getState()
+    store.setPendingFocusNodeId(targetNodeId)
+  }
+
+  function resolveLabel(nodeId: string): string {
+    const node = flowNodes.find((n) => n.id === nodeId)
+    if (!node) return '???'
+    const d = node.data as PLCNodeData
+    return d.label || node.type || nodeId
+  }
+
+  const activeLinks = stepLinks?.filter((l) => flowNodes.some((n) => n.id === l.targetNodeId))
+
   return (
     <div
       className={`relative min-w-[152px] max-w-[220px] bg-white rounded-lg shadow-md overflow-hidden border border-gray-200 ${selectionRing}`}
       style={{ borderTopColor: color, borderTopWidth: 3 }}
     >
-      {/* Cross-diagram anchor badge — top-right corner */}
       {linkedTabId && (
         <button
           className="absolute top-1 right-1 z-10 flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors leading-none nodrag nopan"
@@ -60,7 +76,6 @@ export function BaseNode({
         </button>
       )}
 
-      {/* Coloured type-label header strip */}
       <div
         className="flex items-center justify-between px-2.5 pt-1.5 pb-1"
         style={{ backgroundColor: `${color}18` }}
@@ -82,12 +97,10 @@ export function BaseNode({
         )}
       </div>
 
-      {/* Main label */}
       <div className="px-3 py-2 text-sm font-semibold text-gray-800 leading-snug text-center">
         {label || typeLabel}
       </div>
 
-      {/* PackML state badge */}
       {stateTag && (
         <div className="px-3 pb-1.5 flex justify-center">
           <span
@@ -100,7 +113,6 @@ export function BaseNode({
               borderColor: stateTag.borderColor
             }}
           >
-            {/* Dot indicator — filled for wait, animated ring for acting */}
             <span
               className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                 stateTag.category === 'acting' ? 'animate-pulse' : ''
@@ -112,14 +124,35 @@ export function BaseNode({
         </div>
       )}
 
-      {/* Optional sublabel */}
       {sublabel && (
         <div className="px-3 pb-2 text-[11px] text-center font-mono text-gray-500 border-t border-gray-100 pt-1 leading-snug">
           {sublabel}
         </div>
       )}
 
-      {/* Handles */}
+      {activeLinks && activeLinks.length > 0 && (
+        <div className="border-t border-gray-100 px-1.5 py-1 space-y-1">
+          {activeLinks.map((link) => (
+            <button
+              key={link.id}
+              onClick={(e) => handleStepLinkClick(e, link.targetNodeId)}
+              className="nodrag nopan w-full flex flex-col items-stretch gap-0.5 px-1.5 py-0.5 rounded text-left hover:bg-blue-50 transition-colors group/link"
+              title={`${link.reason ? `${link.reason} → ` : ''}${resolveLabel(link.targetNodeId)}`}
+            >
+              {link.reason && link.reason.trim() && (
+                <span className="text-[9px] font-semibold text-gray-800 leading-tight w-full truncate">
+                  {link.reason.trim()}
+                </span>
+              )}
+              <div className="flex items-center gap-1 min-w-0 w-full">
+                <ArrowRight size={8} className="text-blue-500 flex-shrink-0 group-hover/link:translate-x-0.5 transition-transform" />
+                <span className="text-[9px] font-semibold text-blue-600 truncate">{resolveLabel(link.targetNodeId)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       {!noTarget && <Handle type="target" position={Position.Top} />}
       {!noSource && <Handle type="source" position={Position.Bottom} />}
       {leftHandles && (
@@ -128,7 +161,6 @@ export function BaseNode({
           <Handle type="source" position={Position.Right} id="right" />
         </>
       )}
-      {/* Side handles for backward-flow edges (L5K imports, etc.) */}
       {!noSource && <Handle type="source" position={Position.Right} id="right-source" style={{ opacity: 0, width: 4, height: 4 }} />}
       {!noTarget && <Handle type="target" position={Position.Right} id="right-target" style={{ opacity: 0, width: 4, height: 4 }} />}
     </div>

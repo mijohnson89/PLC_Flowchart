@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('api', {
   exportExcel: (base64: string, defaultName?: string) =>
     ipcRenderer.invoke('dialog:export-excel', { base64, defaultName }),
 
+  // Notes companion-file operations
+  importNoteFile: (projectPath?: string) =>
+    ipcRenderer.invoke('notes:import-file', { projectPath }),
+  openNoteFile: (relativePath: string, projectPath?: string) =>
+    ipcRenderer.invoke('notes:open-file', { relativePath, projectPath }),
+  deleteNoteFile: (relativePath: string, projectPath?: string) =>
+    ipcRenderer.invoke('notes:delete-file', { relativePath, projectPath }),
+
   // Menu events (main -> renderer)
   onMenu: (channel: string, cb: () => void) => {
     const validChannels = [
