@@ -488,7 +488,6 @@ export function SketchNoteEditor({
           : { kind: 'ellipse', ...base }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
       setSelectedIds([shape.id])
-      setTool('select')
       return
     }
     if (draft.kind === 'line') {
@@ -507,7 +506,6 @@ export function SketchNoteEditor({
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
       setSelectedIds([shape.id])
-      setTool('select')
       return
     }
     if (draft.kind === 'pen') {
@@ -524,7 +522,6 @@ export function SketchNoteEditor({
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
       setSelectedIds([shape.id])
-      setTool('select')
     }
   }, [draft, doc, pushDoc, styleFill, styleStroke, styleW])
 
@@ -676,7 +673,6 @@ export function SketchNoteEditor({
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
       setSelectedIds([shape.id])
-      setTool('select')
       e.preventDefault()
     }
   }
