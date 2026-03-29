@@ -181,6 +181,29 @@ function translateShape(s: SketchShape, dx: number, dy: number): SketchShape {
   return s
 }
 
+/** Apply resolved toolbar fill/stroke to one shape (fillVal/strokeVal are `none` or `#rrggbb`). */
+function paintShape(s: SketchShape, fillVal: string, strokeVal: string, strokeW: number): SketchShape {
+  const swStroke = strokeVal === 'none' ? 0 : Math.max(1, strokeW)
+  const swOutline = strokeVal === 'none' ? 0 : strokeW
+  switch (s.kind) {
+    case 'rect':
+    case 'ellipse':
+      return { ...s, fill: fillVal, stroke: strokeVal, strokeWidth: swOutline }
+    case 'line':
+    case 'polyline':
+      return { ...s, fill: 'none', stroke: strokeVal, strokeWidth: swStroke }
+    case 'text':
+      return {
+        ...s,
+        fill: fillVal === 'none' ? s.fill : fillVal,
+        stroke: strokeVal,
+        strokeWidth: strokeVal === 'none' ? 0 : strokeW,
+      }
+    default:
+      return s
+  }
+}
+
 type AlignMode = 'left' | 'right' | 'centerH' | 'top' | 'bottom' | 'centerV'
 
 function alignSelectedShapes(shapes: SketchShape[], ids: string[], mode: AlignMode): SketchShape[] {
@@ -381,6 +404,27 @@ export function SketchNoteEditor({
   const styleFill = noFill ? 'none' : fill
   const styleStroke = noStroke ? 'none' : stroke
   const styleW = noStroke ? 0 : strokeWidth
+
+  type ToolbarPaint = {
+    noFill: boolean
+    fill: string
+    noStroke: boolean
+    stroke: string
+    strokeWidth: number
+  }
+
+  const applyPaintToSelection = useCallback(
+    (p: ToolbarPaint) => {
+      if (tool !== 'select' || selectedIds.length === 0) return
+      const fillVal = p.noFill ? 'none' : p.fill
+      const strokeVal = p.noStroke ? 'none' : p.stroke
+      const strokeW = p.noStroke ? 0 : p.strokeWidth
+      const idSet = new Set(selectedIds)
+      const shapes = doc.shapes.map((s) => (idSet.has(s.id) ? paintShape(s, fillVal, strokeVal, strokeW) : s))
+      pushDoc({ ...doc, shapes })
+    },
+    [tool, selectedIds, doc, pushDoc]
+  )
 
   const commitDraft = useCallback(() => {
     if (!draft) return
@@ -823,28 +867,54 @@ export function SketchNoteEditor({
           </ToolbarBtn>
         </div>
         <label className="flex items-center gap-1 text-[10px] text-gray-600">
-          <input type="checkbox" checked={noFill} onChange={(e) => setNoFill(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={noFill}
+            onChange={(e) => {
+              const v = e.target.checked
+              setNoFill(v)
+              applyPaintToSelection({ noFill: v, fill, noStroke, stroke, strokeWidth })
+            }}
+          />
           No fill
         </label>
         <input
           type="color"
           value={fill.startsWith('#') && fill.length === 7 ? fill : '#fef3c7'}
-          onChange={(e) => { setFill(e.target.value); setNoFill(false) }}
+          onChange={(e) => {
+            const v = e.target.value
+            setFill(v)
+            setNoFill(false)
+            applyPaintToSelection({ noFill: false, fill: v, noStroke, stroke, strokeWidth })
+          }}
           disabled={noFill}
           className="h-7 w-8 rounded border border-gray-200 cursor-pointer disabled:opacity-40"
-          title="Fill"
+          title="Fill — applies to selection in select mode"
         />
         <label className="flex items-center gap-1 text-[10px] text-gray-600">
-          <input type="checkbox" checked={noStroke} onChange={(e) => setNoStroke(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={noStroke}
+            onChange={(e) => {
+              const v = e.target.checked
+              setNoStroke(v)
+              applyPaintToSelection({ noFill, fill, noStroke: v, stroke, strokeWidth })
+            }}
+          />
           No stroke
         </label>
         <input
           type="color"
           value={stroke.startsWith('#') && stroke.length === 7 ? stroke : '#374151'}
-          onChange={(e) => { setStroke(e.target.value); setNoStroke(false) }}
+          onChange={(e) => {
+            const v = e.target.value
+            setStroke(v)
+            setNoStroke(false)
+            applyPaintToSelection({ noFill, fill, noStroke: false, stroke: v, strokeWidth })
+          }}
           disabled={noStroke}
           className="h-7 w-8 rounded border border-gray-200 cursor-pointer disabled:opacity-40"
-          title="Stroke"
+          title="Stroke — applies to selection in select mode"
         />
         <label className="flex items-center gap-1 text-[10px] text-gray-500">
           W
@@ -853,7 +923,11 @@ export function SketchNoteEditor({
             min={0}
             max={32}
             value={strokeWidth}
-            onChange={(e) => setStrokeWidth(Number(e.target.value) || 0)}
+            onChange={(e) => {
+              const v = Number(e.target.value) || 0
+              setStrokeWidth(v)
+              applyPaintToSelection({ noFill, fill, noStroke, stroke, strokeWidth: v })
+            }}
             className="w-12 text-xs border border-gray-200 rounded px-1 py-0.5"
           />
         </label>
