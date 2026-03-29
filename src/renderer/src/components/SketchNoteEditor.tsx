@@ -35,7 +35,7 @@ function clampRectCornerRadius(r: number | undefined, width: number, height: num
   return Math.min(raw, cap)
 }
 
-/** From fixed corner (x0,y0), snap (x1,y1) so |x1-x0| === |y1-y0| (square / 45° line). */
+/** From fixed corner (x0,y0), snap (x1,y1) so |x1-x0| === |y1-y0| (square). */
 function shiftConstrainSquare(x0: number, y0: number, x1: number, y1: number) {
   const dx = x1 - x0
   const dy = y1 - y0
@@ -43,6 +43,16 @@ function shiftConstrainSquare(x0: number, y0: number, x1: number, y1: number) {
   const sx = dx >= 0 ? 1 : -1
   const sy = dy >= 0 ? 1 : -1
   return { x1: x0 + sx * side, y1: y0 + sy * side }
+}
+
+/** Line from (x0,y0): Shift snaps to horizontal or vertical, whichever the pointer is closer to (by |dx| vs |dy|). */
+function shiftConstrainLineHV(x0: number, y0: number, x: number, y: number) {
+  const dx = x - x0
+  const dy = y - y0
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return { x1: x, y1: y0 }
+  }
+  return { x1: x0, y1: y }
 }
 
 function clientToSvg(svg: SVGSVGElement, clientX: number, clientY: number) {
@@ -865,11 +875,20 @@ export function SketchNoteEditor({
     }
 
     if (!draft) return
-    if (draft.kind === 'box' || draft.kind === 'line') {
+    if (draft.kind === 'box') {
       let x1 = x
       let y1 = y
       if (e.shiftKey) {
         const c = shiftConstrainSquare(draft.x0, draft.y0, x, y)
+        x1 = c.x1
+        y1 = c.y1
+      }
+      setDraft({ ...draft, x1, y1 })
+    } else if (draft.kind === 'line') {
+      let x1 = x
+      let y1 = y
+      if (e.shiftKey) {
+        const c = shiftConstrainLineHV(draft.x0, draft.y0, x, y)
         x1 = c.x1
         y1 = c.y1
       }
@@ -1497,7 +1516,7 @@ export function SketchNoteEditor({
         </svg>
       </div>
       <p className="text-[10px] text-gray-400 px-3 py-1 border-t border-gray-100 flex-shrink-0">
-        Drag on empty canvas to box-select; Shift+click toggles a shape or whole group. Hold Shift while drawing a rectangle, ellipse, or line to lock equal width and height (square or 45°). Group / Ungroup in the toolbar. Align / distribute need 2+ or 3+ objects.
+        Drag on empty canvas to box-select; Shift+click toggles a shape or whole group. Hold Shift while drawing a rectangle or ellipse for a square; with the line tool Shift snaps horizontal or vertical from the start. Group / Ungroup in the toolbar. Align / distribute need 2+ or 3+ objects.
       </p>
     </div>
   )
