@@ -15,6 +15,8 @@ const HIT_LINE = 10
 const MIN_DRAW = 4
 const MIN_POLY = 2
 const MARQUEE_DRAG_PX = 4
+/** Visual weight for selected objects in select mode (1 = opaque). */
+const SELECTED_SHAPE_OPACITY = 0.62
 
 function clientToSvg(svg: SVGSVGElement, clientX: number, clientY: number) {
   const pt = svg.createSVGPoint()
@@ -128,6 +130,27 @@ function shapeBBox(s: SketchShape) {
     default:
       return { minX: 0, minY: 0, maxX: 0, maxY: 0, cx: 0, cy: 0 }
   }
+}
+
+function SelectionOutline({ shape }: { shape: SketchShape }) {
+  const b = shapeBBox(shape)
+  const w = Math.max(b.maxX - b.minX, 2)
+  const h = Math.max(b.maxY - b.minY, 2)
+  const pad = 3
+  return (
+    <rect
+      x={b.minX - pad}
+      y={b.minY - pad}
+      width={w + pad * 2}
+      height={h + pad * 2}
+      fill="rgba(99, 102, 241, 0.08)"
+      stroke="#6366f1"
+      strokeWidth={1.5}
+      strokeDasharray="6 4"
+      opacity={1}
+      pointerEvents="none"
+    />
+  )
 }
 
 function marqueeIntersectsBBox(
@@ -1001,32 +1024,36 @@ export function SketchNoteEditor({
           <g className="opacity-60">{gridLines}</g>
           {doc.shapes.map((s) => {
             const isSel = selectedSet.has(s.id) && tool === 'select'
-            const common = { key: s.id }
+            const dim = isSel ? SELECTED_SHAPE_OPACITY : 1
+            const key = { key: s.id }
             if (s.kind === 'rect') {
               return (
-                <g {...common}>
-                  <rect
-                    x={s.x}
-                    y={s.y}
-                    width={s.width}
-                    height={s.height}
-                    fill={s.fill}
-                    stroke={s.stroke}
-                    strokeWidth={s.strokeWidth}
-                  />
-                  {(s.text?.trim() || isSel) && (
-                    <text
-                      x={s.x + s.width / 2}
-                      y={s.y + s.height / 2}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill={s.stroke !== 'none' ? s.stroke : '#111827'}
-                      fontSize={s.fontSize ?? 14}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      {s.text || (isSel ? '…' : '')}
-                    </text>
-                  )}
+                <g {...key}>
+                  <g opacity={dim}>
+                    <rect
+                      x={s.x}
+                      y={s.y}
+                      width={s.width}
+                      height={s.height}
+                      fill={s.fill}
+                      stroke={s.stroke}
+                      strokeWidth={s.strokeWidth}
+                    />
+                    {(s.text?.trim() || isSel) && (
+                      <text
+                        x={s.x + s.width / 2}
+                        y={s.y + s.height / 2}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill={s.stroke !== 'none' ? s.stroke : '#111827'}
+                        fontSize={s.fontSize ?? 14}
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {s.text || (isSel ? '…' : '')}
+                      </text>
+                    )}
+                  </g>
+                  {isSel && <SelectionOutline shape={s} />}
                 </g>
               )
             }
@@ -1036,55 +1063,77 @@ export function SketchNoteEditor({
               const rx = Math.max(s.width / 2, 0.5)
               const ry = Math.max(s.height / 2, 0.5)
               return (
-                <g {...common}>
-                  <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s.fill} stroke={s.stroke} strokeWidth={s.strokeWidth} />
-                  {(s.text?.trim() || isSel) && (
-                    <text
-                      x={cx}
-                      y={cy}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill={s.stroke !== 'none' ? s.stroke : '#111827'}
-                      fontSize={s.fontSize ?? 14}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      {s.text || (isSel ? '…' : '')}
-                    </text>
-                  )}
+                <g {...key}>
+                  <g opacity={dim}>
+                    <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s.fill} stroke={s.stroke} strokeWidth={s.strokeWidth} />
+                    {(s.text?.trim() || isSel) && (
+                      <text
+                        x={cx}
+                        y={cy}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill={s.stroke !== 'none' ? s.stroke : '#111827'}
+                        fontSize={s.fontSize ?? 14}
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {s.text || (isSel ? '…' : '')}
+                      </text>
+                    )}
+                  </g>
+                  {isSel && <SelectionOutline shape={s} />}
                 </g>
               )
             }
             if (s.kind === 'line') {
               return (
-                <line
-                  key={s.id}
-                  x1={s.x1}
-                  y1={s.y1}
-                  x2={s.x2}
-                  y2={s.y2}
-                  stroke={s.stroke}
-                  strokeWidth={s.strokeWidth}
-                  fill="none"
-                />
+                <g {...key}>
+                  <line
+                    x1={s.x1}
+                    y1={s.y1}
+                    x2={s.x2}
+                    y2={s.y2}
+                    stroke={s.stroke}
+                    strokeWidth={s.strokeWidth}
+                    fill="none"
+                    opacity={dim}
+                  />
+                  {isSel && <SelectionOutline shape={s} />}
+                </g>
               )
             }
             if (s.kind === 'polyline') {
               const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-              return <path key={s.id} d={d} stroke={s.stroke} strokeWidth={s.strokeWidth} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+              return (
+                <g {...key}>
+                  <path
+                    d={d}
+                    stroke={s.stroke}
+                    strokeWidth={s.strokeWidth}
+                    fill="none"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    opacity={dim}
+                  />
+                  {isSel && <SelectionOutline shape={s} />}
+                </g>
+              )
             }
             return (
-              <text
-                key={s.id}
-                x={s.x}
-                y={s.y}
-                fill={s.fill}
-                stroke={s.stroke === 'none' ? undefined : s.stroke}
-                strokeWidth={s.stroke === 'none' ? 0 : s.strokeWidth}
-                fontSize={s.fontSize}
-                style={{ pointerEvents: 'none' }}
-              >
-                {s.text}
-              </text>
+              <g {...key}>
+                <text
+                  x={s.x}
+                  y={s.y}
+                  fill={s.fill}
+                  stroke={s.stroke === 'none' ? undefined : s.stroke}
+                  strokeWidth={s.stroke === 'none' ? 0 : s.strokeWidth}
+                  fontSize={s.fontSize}
+                  opacity={dim}
+                  style={{ pointerEvents: 'none' }}
+                >
+                  {s.text}
+                </text>
+                {isSel && <SelectionOutline shape={s} />}
+              </g>
             )
           })}
           {draft?.kind === 'box' && (
