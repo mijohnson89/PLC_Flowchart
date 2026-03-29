@@ -393,7 +393,85 @@ export interface Alarm {
 
 export const NOTES_TAB_ID = '__notes__'
 
-export type NoteItemType = 'note' | 'file' | 'link'
+export type NoteItemType = 'note' | 'file' | 'link' | 'sketch'
+
+/** Vector sketch stored on a `sketch` note — all coordinates are canvas space (SVG user units). */
+export type SketchShapeKind = 'rect' | 'ellipse' | 'line' | 'polyline' | 'text'
+
+export interface SketchStrokeStyle {
+  stroke: string
+  strokeWidth: number
+}
+
+export interface SketchShapeRect extends SketchStrokeStyle {
+  id: string
+  kind: 'rect'
+  x: number
+  y: number
+  width: number
+  height: number
+  fill: string
+  /** Centered label inside the shape */
+  text?: string
+  fontSize?: number
+}
+
+export interface SketchShapeEllipse extends SketchStrokeStyle {
+  id: string
+  kind: 'ellipse'
+  x: number
+  y: number
+  width: number
+  height: number
+  fill: string
+  text?: string
+  fontSize?: number
+}
+
+export interface SketchShapeLine extends SketchStrokeStyle {
+  id: string
+  kind: 'line'
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  fill: 'none'
+}
+
+export interface SketchShapePolyline extends SketchStrokeStyle {
+  id: string
+  kind: 'polyline'
+  points: { x: number; y: number }[]
+  fill: 'none'
+}
+
+export interface SketchShapeText extends SketchStrokeStyle {
+  id: string
+  kind: 'text'
+  x: number
+  y: number
+  text: string
+  fontSize: number
+  fill: string
+}
+
+export type SketchShape =
+  | SketchShapeRect
+  | SketchShapeEllipse
+  | SketchShapeLine
+  | SketchShapePolyline
+  | SketchShapeText
+
+export interface SketchDocument {
+  version: 1
+  width: number
+  height: number
+  shapes: SketchShape[]
+}
+
+export function createEmptySketchDocument(): SketchDocument {
+  return { version: 1, width: 2000, height: 1400, shapes: [] }
+}
 
 export interface NoteFolder {
   id: string
@@ -415,6 +493,8 @@ export interface NoteItem {
   /** Relative path inside the companion _files folder (for 'file' type) */
   filePath?: string
   fileName?: string       // original filename for display
+  /** Vector drawing for 'sketch' type */
+  sketchDocument?: SketchDocument
 }
 
 // ── Flowchart Conditions ──────────────────────────────────────────────────────

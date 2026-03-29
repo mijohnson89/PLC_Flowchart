@@ -16,7 +16,10 @@ import type {
   NoteItem, NoteItemType, NoteFolder,
   ProjectVariation,
 } from '../types'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, PROJECT_TAB_ID } from '../types'
+import {
+  INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, PROJECT_TAB_ID,
+  createEmptySketchDocument,
+} from '../types'
 
 const PROJECT_VERSION = '2.0'
 import { uid } from '../utils/uid'
@@ -368,8 +371,8 @@ interface DiagramStore {
   noteItems: NoteItem[]
   noteFolders: NoteFolder[]
   activeNoteId: string | null
-  addNoteItem: (type: NoteItemType, name: string, extra?: Partial<Pick<NoteItem, 'content' | 'url' | 'filePath' | 'fileName' | 'folderId'>>) => string
-  updateNoteItem: (id: string, patch: Partial<Pick<NoteItem, 'name' | 'content' | 'url' | 'folderId'>>) => void
+  addNoteItem: (type: NoteItemType, name: string, extra?: Partial<Pick<NoteItem, 'content' | 'url' | 'filePath' | 'fileName' | 'folderId' | 'sketchDocument'>>) => string
+  updateNoteItem: (id: string, patch: Partial<Pick<NoteItem, 'name' | 'content' | 'url' | 'folderId' | 'sketchDocument'>>) => void
   removeNoteItem: (id: string) => void
   setActiveNoteId: (id: string | null) => void
   addNoteFolder: (name: string, parentId?: string | null) => string
@@ -1774,12 +1777,15 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       taskAutoGen: { ioCardFAT: true, analogSAT: true, sequenceTesting: true, deviceTesting: true, alarmTesting: true, ...project.taskAutoGen },
       alarms: project.alarms ?? [],
       noteItems: (() => {
-        if (project.noteItems && project.noteItems.length > 0) return project.noteItems
-        if (project.taskNotes) {
+        let items: NoteItem[]
+        if (project.noteItems && project.noteItems.length > 0) items = project.noteItems
+        else if (project.taskNotes) {
           const now = new Date().toISOString()
-          return [{ id: uid('note'), name: 'Task Notes (migrated)', type: 'note' as const, content: project.taskNotes, createdAt: now, updatedAt: now }]
-        }
-        return []
+          items = [{ id: uid('note'), name: 'Task Notes (migrated)', type: 'note' as const, content: project.taskNotes, createdAt: now, updatedAt: now }]
+        } else items = []
+        return items.map((n) =>
+          n.type === 'sketch' && !n.sketchDocument ? { ...n, sketchDocument: createEmptySketchDocument() } : n
+        )
       })(),
       noteFolders: project.noteFolders ?? [],
       activeNoteId: null,

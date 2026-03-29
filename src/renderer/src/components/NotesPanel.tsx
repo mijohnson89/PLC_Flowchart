@@ -4,10 +4,12 @@ import {
   Bold, Italic, Underline as UnderlineIcon, List, ListOrdered,
   Heading1, Heading2, Strikethrough, Minus, Link, ChevronDown, ChevronRight,
   Pencil, Check, X, Search, StickyNote, Globe, File,
-  FolderPlus, FolderClosed, GripVertical
+  FolderPlus, FolderClosed, GripVertical, PenLine,
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { NoteItem, NoteItemType, NoteFolder } from '../types'
+import type { NoteItem, NoteItemType, NoteFolder, SketchDocument } from '../types'
+import { createEmptySketchDocument } from '../types'
+import { SketchNoteEditor } from './SketchNoteEditor'
 
 // ── Drag-and-drop types ──────────────────────────────────────────────────────
 
@@ -25,10 +27,18 @@ interface DropIndicator {
 
 // ── Type metadata ─────────────────────────────────────────────────────────────
 
+const TYPE_FILTER_LABEL: Record<NoteItemType, string> = {
+  note: 'Notes',
+  file: 'Files',
+  link: 'Links',
+  sketch: 'Sketches',
+}
+
 const TYPE_META: Record<NoteItemType, { label: string; icon: React.ReactNode; color: string; bgColor: string }> = {
   note: { label: 'Note', icon: <StickyNote size={12} />, color: 'text-amber-600', bgColor: 'bg-amber-50' },
   file: { label: 'File', icon: <Paperclip size={12} />, color: 'text-blue-600', bgColor: 'bg-blue-50' },
   link: { label: 'Link', icon: <Globe size={12} />, color: 'text-emerald-600', bgColor: 'bg-emerald-50' },
+  sketch: { label: 'Sketch', icon: <PenLine size={12} />, color: 'text-violet-600', bgColor: 'bg-violet-50' },
 }
 
 // ── Rich Text Editor ──────────────────────────────────────────────────────────
@@ -259,6 +269,10 @@ function AddDropdown({ onClose, onAddFile, onAddFolder, activeFolderId }: {
     addNoteItem('link', 'New Link', { url: '', folderId: activeFolderId })
     onClose()
   }
+  const addSketch = () => {
+    addNoteItem('sketch', 'Untitled Sketch', { sketchDocument: createEmptySketchDocument(), folderId: activeFolderId })
+    onClose()
+  }
 
   return (
     <div ref={ref} className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 w-52 py-1">
@@ -273,6 +287,10 @@ function AddDropdown({ onClose, onAddFile, onAddFolder, activeFolderId }: {
       <button onClick={addLink} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors text-left">
         <span className="p-1.5 bg-emerald-50 rounded-lg"><Globe size={13} className="text-emerald-600" /></span>
         <div><span className="text-xs font-semibold text-gray-700 block">Web Link</span><span className="text-[10px] text-gray-400">URL to external resource</span></div>
+      </button>
+      <button onClick={addSketch} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors text-left">
+        <span className="p-1.5 bg-violet-50 rounded-lg"><PenLine size={13} className="text-violet-600" /></span>
+        <div><span className="text-xs font-semibold text-gray-700 block">Sketch</span><span className="text-[10px] text-gray-400">Vector shapes, lines, text</span></div>
       </button>
       <div className="h-px bg-gray-100 my-1" />
       <button onClick={() => { onAddFolder(); onClose() }} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors text-left">
@@ -511,6 +529,13 @@ export function NotesPanel() {
     if (activeNoteId) updateNoteItem(activeNoteId, { content: html })
   }, [activeNoteId, updateNoteItem])
 
+  const handleSketchDocumentChange = useCallback(
+    (sketchDocument: SketchDocument) => {
+      if (activeNoteId) updateNoteItem(activeNoteId, { sketchDocument })
+    },
+    [activeNoteId, updateNoteItem]
+  )
+
   const toggleFolder = (id: string) => setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }))
   const isFolderOpen = (id: string) => !(collapsed[id] ?? false)
 
@@ -714,12 +739,12 @@ export function NotesPanel() {
             {search && <button onClick={() => setSearch('')} className="text-gray-400 hover:text-gray-600"><X size={11} /></button>}
           </div>
           <div className="flex items-center gap-1">
-            {(['all', 'note', 'file', 'link'] as const).map((t) => (
+            {(['all', 'note', 'file', 'link', 'sketch'] as const).map((t) => (
               <button key={t} onClick={() => setFilterType(t)}
                 className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
                   filterType === t ? 'bg-indigo-100 text-indigo-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                 }`}>
-                {t === 'all' ? 'All' : TYPE_META[t].label + 's'}
+                {t === 'all' ? 'All' : TYPE_FILTER_LABEL[t]}
               </button>
             ))}
           </div>
@@ -770,6 +795,13 @@ export function NotesPanel() {
             {activeItem.type === 'note' && <RichTextEditor content={activeItem.content ?? ''} onChange={handleNoteContentChange} />}
             {activeItem.type === 'file' && <FileDetail item={activeItem} projectPath={currentFilePath ?? undefined} />}
             {activeItem.type === 'link' && <LinkDetail item={activeItem} onUpdateUrl={(url) => updateNoteItem(activeItem.id, { url })} />}
+            {activeItem.type === 'sketch' && (
+              <SketchNoteEditor
+                key={activeItem.id}
+                document={activeItem.sketchDocument}
+                onChange={handleSketchDocumentChange}
+              />
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
