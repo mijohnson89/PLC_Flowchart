@@ -574,8 +574,10 @@ export function SketchNoteEditor({
           setMarquee(next)
           pendingEmptyDown.current = null
         }
-      } else if (marquee) {
-        const next = { ...marquee, x1: x, y1: y }
+      } else if (marqueeLiveRef.current) {
+        // Use ref, not `marquee` state — state is stale until re-render so moves would be dropped.
+        const m = marqueeLiveRef.current
+        const next = { ...m, x1: x, y1: y }
         marqueeLiveRef.current = next
         setMarquee(next)
       }
