@@ -1,4 +1,4 @@
-import { Component, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
 import { useDiagramStore, selectIsViewingRevision } from './store/diagramStore'
 import { Toolbar } from './components/Toolbar'
@@ -6,18 +6,20 @@ import { TabBar } from './components/TabBar'
 import { Sidebar } from './components/Sidebar'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { SequenceCanvas } from './components/SequenceCanvas'
-import { RevisionPanel } from './components/RevisionPanel'
 import { RevisionChangesTable } from './components/RevisionChangesTable'
 import { InterfacesPanel } from './components/InterfacesPanel'
 import { DiagramTreeView } from './components/DiagramTreeView'
 import { TasksPanel } from './components/TasksPanel'
 import { IOTablePanel } from './components/IOTablePanel'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID } from './types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID, PROJECT_TAB_ID } from './types'
 import { LocationsPanel } from './components/LocationsPanel'
+import { ProjectPanel } from './components/ProjectPanel'
 import { FlowchartDiagramPanes } from './components/FlowchartDiagramPanes'
+import { RevisionCompareView } from './components/RevisionCompareView'
 import { AlarmsPanel } from './components/AlarmsPanel'
 import { NotesPanel } from './components/NotesPanel'
 import { PhasesPanel } from './components/PhasesPanel'
+import { StatesPanel } from './components/StatesPanel'
 // ── Error boundary ────────────────────────────────────────────────────────────
 
 class AppErrorBoundary extends Component<
@@ -59,17 +61,23 @@ export default function App() {
   const activeTab = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const isViewingRevision = useDiagramStore(selectIsViewingRevision)
   const [showRevisions, setShowRevisions] = useState(false)
+  const [revisionCompareOpen, setRevisionCompareOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  const isProjectTab = activeTabId === PROJECT_TAB_ID
   const isInterfacesTab = activeTabId === INTERFACES_TAB_ID
   const isLocationsTab = activeTabId === LOCATIONS_TAB_ID
   const isTasksTab = activeTabId === TASKS_TAB_ID
   const isIOTableTab = activeTabId === IO_TABLE_TAB_ID
   const isAlarmsTab = activeTabId === ALARMS_TAB_ID
   const isNotesTab = activeTabId === NOTES_TAB_ID
-  const isSpecialTab = isInterfacesTab || isLocationsTab || isTasksTab || isIOTableTab || isAlarmsTab || isNotesTab
+  const isSpecialTab = isProjectTab || isInterfacesTab || isLocationsTab || isTasksTab || isIOTableTab || isAlarmsTab || isNotesTab
   const isFlowchart = !isSpecialTab && activeTab?.type === 'flowchart'
   const readOnly = isViewingRevision
+
+  useEffect(() => {
+    if (!isFlowchart) setRevisionCompareOpen(false)
+  }, [isFlowchart])
 
   return (
     <AppErrorBoundary>
@@ -77,6 +85,9 @@ export default function App() {
         <Toolbar
           showRevisions={showRevisions}
           onToggleRevisions={() => setShowRevisions((v) => !v)}
+          revisionCompareOpen={revisionCompareOpen}
+          onToggleRevisionCompare={() => setRevisionCompareOpen((v) => !v)}
+          canRevisionCompare={isFlowchart}
         />
         <TabBar />
 
@@ -86,7 +97,12 @@ export default function App() {
               <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 <DiagramTreeView />
               </div>
-              {isFlowchart && <PhasesPanel />}
+              {isFlowchart && (
+                <>
+                  <StatesPanel />
+                  <PhasesPanel />
+                </>
+              )}
               {!isSpecialTab && (
                 <>
                   <div className="border-t border-gray-200 flex-shrink-0" />
@@ -97,7 +113,9 @@ export default function App() {
             </div>
 
             <main className="flex-1 overflow-hidden relative flex">
-              {isInterfacesTab ? (
+              {isProjectTab ? (
+                <ProjectPanel />
+              ) : isInterfacesTab ? (
                 <InterfacesPanel />
               ) : isLocationsTab ? (
                 <LocationsPanel />
@@ -111,14 +129,14 @@ export default function App() {
                 <NotesPanel />
               ) : activeTab?.type === 'sequence' ? (
                 <SequenceCanvas key={activeTab.id} readOnly={readOnly} />
+              ) : revisionCompareOpen && isFlowchart ? (
+                <RevisionCompareView onClose={() => setRevisionCompareOpen(false)} />
               ) : (
                 <div className="flex-1 flex flex-col overflow-hidden min-h-0">
                   <FlowchartDiagramPanes key={activeTab?.id} readOnly={readOnly} />
                 </div>
               )}
             </main>
-
-            {!isSpecialTab && showRevisions && <RevisionPanel />}
           </div>
 
           {!isSpecialTab && showRevisions && <RevisionChangesTable />}

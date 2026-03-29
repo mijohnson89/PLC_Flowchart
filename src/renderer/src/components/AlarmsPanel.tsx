@@ -1,7 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Bell, BellRing, Layers, X } from 'lucide-react'
+import { Plus, Trash2, Pencil, Bell, BellRing, Layers, X, Gauge } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { Alarm } from '../types'
+import {
+  type Alarm,
+  type AnalogAlarmConfig,
+  type AnalogAlarmBand,
+  type AnalogAlarmHystBand,
+  createDefaultAnalogAlarmConfig,
+} from '../types'
 import { uid } from '../utils/uid'
 
 interface FlatAlarmRow {
@@ -16,6 +22,177 @@ interface FlatAlarmRow {
   standaloneAlarm?: Alarm
 }
 
+const BAND_KEYS = ['ll', 'l', 'h', 'hh'] as const
+const HYST_KEYS = ['llHyst', 'lHyst', 'hHyst', 'hhHyst'] as const
+
+const BAND_LABELS: Record<(typeof BAND_KEYS)[number], string> = {
+  ll: 'LL',
+  l: 'L',
+  h: 'H',
+  hh: 'HH',
+}
+
+const HYST_LABELS: Record<(typeof HYST_KEYS)[number], string> = {
+  llHyst: 'LL-Hyst',
+  lHyst: 'L-Hyst',
+  hHyst: 'H-Hyst',
+  hhHyst: 'HH-Hyst',
+}
+
+/** Decimal numeric text only: optional leading `-`, digits, one `.` (allows partial `-`, `.`, `-.` while typing). */
+function sanitizeAnalogNumericInput(raw: string): string {
+  const filtered = raw.replace(/[^\d.\-]/g, '')
+  if (filtered === '' || filtered === '-') return filtered
+  const neg = filtered[0] === '-'
+  let rest = neg ? filtered.slice(1) : filtered
+  if (rest === '') return neg ? '-' : ''
+  const dot = rest.indexOf('.')
+  let intPart: string
+  let frac: string
+  if (dot === -1) {
+    intPart = rest.replace(/\D/g, '')
+    frac = ''
+  } else {
+    intPart = rest.slice(0, dot).replace(/\D/g, '')
+    frac = rest.slice(dot + 1).replace(/\D/g, '')
+  }
+  const joined = dot === -1 ? intPart : `${intPart}.${frac}`
+  return neg ? `-${joined}` : joined
+}
+
+function AnalogAlarmEditor({
+  alarm,
+  onChange,
+}: {
+  alarm: Alarm
+  onChange: (next: AnalogAlarmConfig) => void
+}) {
+  const analog = alarm.analog
+  if (!analog || alarm.alarmType !== 'analog') return null
+
+  const setBand = (key: (typeof BAND_KEYS)[number], patch: Partial<AnalogAlarmBand>) => {
+    onChange({ ...analog, [key]: { ...analog[key], ...patch } })
+  }
+
+  const setHyst = (key: (typeof HYST_KEYS)[number], patch: Partial<AnalogAlarmHystBand>) => {
+    onChange({ ...analog, [key]: { ...analog[key], ...patch } })
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-emerald-100 space-y-4">
+      <div>
+        <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-2">Limits</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px] border-collapse min-w-[520px]">
+            <thead>
+              <tr className="text-left text-[9px] font-bold text-gray-400 uppercase">
+                <th className="pr-2 py-1 w-14"></th>
+                <th className="pr-2 py-1 w-16">Enable</th>
+                <th className="pr-2 py-1">Value</th>
+                <th className="py-1 w-36">Reset</th>
+              </tr>
+            </thead>
+            <tbody>
+              {BAND_KEYS.map((key) => {
+                const b = analog[key]
+                return (
+                  <tr key={key} className="border-t border-emerald-50">
+                    <td className="pr-2 py-1.5 font-mono font-semibold text-emerald-900">{BAND_LABELS[key]}</td>
+                    <td className="pr-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={b.enabled}
+                        onChange={(e) => setBand(key, { enabled: e.target.checked })}
+                        className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-400"
+                      />
+                    </td>
+                    <td className="pr-2 py-1.5">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={sanitizeAnalogNumericInput(b.value)}
+                        onChange={(e) => setBand(key, { value: sanitizeAnalogNumericInput(e.target.value) })}
+                        onBlur={() => {
+                          const v = sanitizeAnalogNumericInput(b.value)
+                          if (v !== b.value) setBand(key, { value: v })
+                        }}
+                        disabled={!b.enabled}
+                        className="w-full min-w-[80px] text-xs border border-gray-200 rounded px-2 py-1 font-mono tabular-nums disabled:bg-gray-50 disabled:text-gray-400"
+                        placeholder="0"
+                      />
+                    </td>
+                    <td className="py-1.5">
+                      <select
+                        value={b.reset}
+                        onChange={(e) => setBand(key, { reset: e.target.value as AnalogAlarmBand['reset'] })}
+                        disabled={!b.enabled}
+                        className="text-xs border border-gray-200 rounded px-2 py-1 bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                      >
+                        <option value="manual">Manual</option>
+                        <option value="auto">Auto</option>
+                      </select>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-2">Hysteresis</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px] border-collapse min-w-[360px]">
+            <thead>
+              <tr className="text-left text-[9px] font-bold text-gray-400 uppercase">
+                <th className="pr-2 py-1 w-20"></th>
+                <th className="pr-2 py-1 w-16">Enable</th>
+                <th className="py-1">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {HYST_KEYS.map((key) => {
+                const h = analog[key]
+                return (
+                  <tr key={key} className="border-t border-emerald-50">
+                    <td className="pr-2 py-1.5 font-mono font-semibold text-emerald-900">{HYST_LABELS[key]}</td>
+                    <td className="pr-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={h.enabled}
+                        onChange={(e) => setHyst(key, { enabled: e.target.checked })}
+                        className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-400"
+                      />
+                    </td>
+                    <td className="py-1.5">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={sanitizeAnalogNumericInput(h.value)}
+                        onChange={(e) => setHyst(key, { value: sanitizeAnalogNumericInput(e.target.value) })}
+                        onBlur={() => {
+                          const v = sanitizeAnalogNumericInput(h.value)
+                          if (v !== h.value) setHyst(key, { value: v })
+                        }}
+                        disabled={!h.enabled}
+                        className="w-full max-w-[200px] text-xs border border-gray-200 rounded px-2 py-1 font-mono tabular-nums disabled:bg-gray-50 disabled:text-gray-400"
+                        placeholder="0"
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function AlarmsPanel() {
   const alarms = useDiagramStore((s) => s.alarms)
   const interfaces = useDiagramStore((s) => s.userInterfaces)
@@ -23,18 +200,31 @@ export function AlarmsPanel() {
   const { addAlarm, updateAlarm, removeAlarm, updateFieldInInterface } = useDiagramStore()
 
   const [adding, setAdding] = useState(false)
+  const [addingAnalog, setAddingAnalog] = useState(false)
   const [newDesc, setNewDesc] = useState('')
+  const [newAnalogDesc, setNewAnalogDesc] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const [editMsgKey, setEditMsgKey] = useState<string | null>(null)
   const [editMsgDraft, setEditMsgDraft] = useState('')
   const addRef = useRef<HTMLInputElement>(null)
+  const addAnalogRef = useRef<HTMLInputElement>(null)
   const editRef = useRef<HTMLInputElement>(null)
   const editMsgRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { if (adding) addRef.current?.focus() }, [adding])
+  useEffect(() => { if (addingAnalog) addAnalogRef.current?.focus() }, [addingAnalog])
   useEffect(() => { if (editingId) editRef.current?.select() }, [editingId])
   useEffect(() => { if (editMsgKey) editMsgRef.current?.select() }, [editMsgKey])
+
+  const onceOffAlarms = useMemo(
+    () => alarms.filter((a) => a.alarmType !== 'analog'),
+    [alarms]
+  )
+  const analogAlarms = useMemo(
+    () => alarms.filter((a) => a.alarmType === 'analog'),
+    [alarms]
+  )
 
   const submit = () => {
     const desc = newDesc.trim()
@@ -44,17 +234,21 @@ export function AlarmsPanel() {
     setAdding(false)
   }
 
-  const rows = useMemo<FlatAlarmRow[]>(() => {
-    const result: FlatAlarmRow[] = []
+  const submitAnalog = () => {
+    const desc = newAnalogDesc.trim()
+    if (!desc) return
+    addAlarm({
+      id: uid('alarm'),
+      description: desc,
+      alarmType: 'analog',
+      analog: createDefaultAnalogAlarmConfig(),
+    })
+    setNewAnalogDesc('')
+    setAddingAnalog(false)
+  }
 
-    for (const alarm of alarms) {
-      result.push({
-        key: `s-${alarm.id}`,
-        type: 'standalone',
-        alarmMessage: alarm.description,
-        standaloneAlarm: alarm
-      })
-    }
+  const instanceRows = useMemo<FlatAlarmRow[]>(() => {
+    const result: FlatAlarmRow[] = []
 
     for (const iface of interfaces) {
       for (const field of iface.fields) {
@@ -90,10 +284,22 @@ export function AlarmsPanel() {
     }
 
     return result
-  }, [alarms, interfaces, allInstances])
+  }, [interfaces, allInstances])
 
-  const standaloneCount = alarms.length
-  const instanceCount = rows.filter((r) => r.type === 'instance').length
+  const onceOffRows = useMemo<FlatAlarmRow[]>(() =>
+    onceOffAlarms.map((alarm) => ({
+      key: `s-${alarm.id}`,
+      type: 'standalone' as const,
+      alarmMessage: alarm.description,
+      standaloneAlarm: alarm
+    })),
+  [onceOffAlarms])
+
+  const standaloneCount = onceOffAlarms.length
+  const analogCount = analogAlarms.length
+  const instanceCount = instanceRows.length
+  const totalListed = standaloneCount + analogCount + instanceCount
+  const hasAnyContent = totalListed > 0 || adding || addingAnalog
 
   const commitEdit = () => {
     if (!editingId) return
@@ -122,21 +328,27 @@ export function AlarmsPanel() {
       <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border-b border-amber-100 flex-shrink-0">
         <BellRing size={14} className="text-amber-600" />
         <span className="text-sm font-semibold text-amber-800">Alarms</span>
-        {rows.length > 0 && (
+        {totalListed > 0 && (
           <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
-            {rows.length}
+            {totalListed}
           </span>
         )}
         <div className="flex-1" />
         <button
-          onClick={() => setAdding(true)}
+          onClick={() => { setAdding(true); setAddingAnalog(false) }}
           className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors"
         >
           <Plus size={11} /> Add Alarm
         </button>
+        <button
+          onClick={() => { setAddingAnalog(true); setAdding(false) }}
+          className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors"
+        >
+          <Gauge size={11} /> Add Analog Alarm
+        </button>
       </div>
 
-      {/* Add form */}
+      {/* Add once-off form */}
       {adding && (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50/60 border-b border-amber-100 flex-shrink-0">
           <input
@@ -159,24 +371,54 @@ export function AlarmsPanel() {
         </div>
       )}
 
+      {/* Add analog form */}
+      {addingAnalog && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50/80 border-b border-emerald-100 flex-shrink-0">
+          <Gauge size={14} className="text-emerald-600 flex-shrink-0" />
+          <input
+            ref={addAnalogRef}
+            className="flex-1 text-xs border border-emerald-200 rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+            placeholder="Name or tag (e.g. Tank level)…"
+            value={newAnalogDesc}
+            onChange={(e) => setNewAnalogDesc(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitAnalog()
+              if (e.key === 'Escape') { setAddingAnalog(false); setNewAnalogDesc('') }
+            }}
+          />
+          <button onClick={submitAnalog} disabled={!newAnalogDesc.trim()} className="px-3 py-1.5 text-[11px] font-semibold text-white bg-emerald-600 rounded hover:bg-emerald-700 disabled:opacity-40 transition-colors">
+            Add
+          </button>
+          <button onClick={() => { setAddingAnalog(false); setNewAnalogDesc('') }} className="p-1 text-gray-400 hover:text-gray-600 rounded">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {/* Empty state */}
-      {rows.length === 0 && !adding && (
+      {!hasAnyContent && (
         <div className="flex items-center justify-center py-12 text-center flex-1">
           <div>
             <BellRing size={28} className="mx-auto mb-3 text-gray-300" />
             <p className="text-sm text-gray-400 mb-1">No alarms defined</p>
             <p className="text-[11px] text-gray-400 mb-3">
-              Add once-off alarms here, or mark fields as alarms on the Interfaces screen
+              Add once-off or analog alarms here, or mark fields as alarms on the Interfaces screen
             </p>
-            <button onClick={() => setAdding(true)} className="text-[11px] text-amber-600 hover:text-amber-700 font-semibold">
-              <Plus size={10} className="inline -mt-0.5 mr-0.5" />Add first alarm
-            </button>
+            <div className="flex items-center justify-center gap-3">
+              <button onClick={() => setAdding(true)} className="text-[11px] text-amber-600 hover:text-amber-700 font-semibold">
+                <Plus size={10} className="inline -mt-0.5 mr-0.5" />Add alarm
+              </button>
+              <span className="text-gray-300">·</span>
+              <button onClick={() => setAddingAnalog(true)} className="text-[11px] text-emerald-600 hover:text-emerald-700 font-semibold">
+                <Gauge size={10} className="inline -mt-0.5 mr-0.5" />Add analog alarm
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Table */}
-      {rows.length > 0 && (
+      {/* Tables & analog cards */}
+      {hasAnyContent && (standaloneCount > 0 || analogCount > 0 || instanceCount > 0) && (
         <div className="flex-1 overflow-auto min-h-0">
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10">
@@ -190,7 +432,7 @@ export function AlarmsPanel() {
               </tr>
             </thead>
             <tbody>
-              {/* Once-off section header */}
+              {/* Once-off section */}
               {standaloneCount > 0 && (
                 <tr className="bg-gray-50/80">
                   <td colSpan={6} className="px-4 py-1.5">
@@ -202,7 +444,7 @@ export function AlarmsPanel() {
                   </td>
                 </tr>
               )}
-              {rows.filter((r) => r.type === 'standalone').map((row, i) => (
+              {onceOffRows.map((row, i) => (
                 <tr key={row.key} className="border-b border-gray-100 hover:bg-amber-50/30 transition-colors group">
                   <td className="px-4 py-2 text-gray-400 tabular-nums">{i + 1}</td>
                   <td className="px-3 py-2">
@@ -246,7 +488,72 @@ export function AlarmsPanel() {
                 </tr>
               ))}
 
-              {/* Per-instance section header */}
+              {/* Analog section — full-width detail rows */}
+              {analogCount > 0 && (
+                <tr className="bg-emerald-50/80">
+                  <td colSpan={6} className="px-4 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <Gauge size={10} className="text-emerald-600" />
+                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Analog Alarms</span>
+                      <span className="text-[9px] font-bold bg-emerald-200 text-emerald-800 px-1.5 py-px rounded-full">{analogCount}</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {analogAlarms.map((alarm, ai) => {
+                const idx = standaloneCount + ai + 1
+                return (
+                  <tr key={alarm.id} className="border-b border-emerald-100/80 bg-emerald-50/20 hover:bg-emerald-50/40 transition-colors group">
+                    <td className="px-4 py-2 align-top text-gray-400 tabular-nums">{idx}</td>
+                    <td className="px-3 py-2 align-top">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <Gauge size={9} /> Analog
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 align-top" colSpan={3}>
+                      <div className="max-w-3xl">
+                        <div className="flex items-start gap-2 flex-wrap">
+                          {editingId === alarm.id ? (
+                            <input
+                              ref={editRef}
+                              autoFocus
+                              className="flex-1 min-w-[200px] text-xs bg-white border border-emerald-400 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-emerald-300"
+                              value={editDraft}
+                              onChange={(e) => setEditDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitEdit()
+                                if (e.key === 'Escape') setEditingId(null)
+                              }}
+                              onBlur={commitEdit}
+                            />
+                          ) : (
+                            <span className="text-gray-900 font-semibold">{alarm.description}</span>
+                          )}
+                        </div>
+                        <AnalogAlarmEditor
+                          alarm={alarm}
+                          onChange={(next) => updateAlarm(alarm.id, { analog: next })}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-2 py-2 align-top">
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                        <button
+                          onClick={() => { setEditingId(alarm.id); setEditDraft(alarm.description) }}
+                          className="p-1 text-gray-400 hover:text-gray-600 rounded" title="Edit name"
+                        >
+                          <Pencil size={10} />
+                        </button>
+                        <button onClick={() => removeAlarm(alarm.id)} className="p-1 text-gray-400 hover:text-red-500 rounded" title="Delete">
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+
+              {/* Per-instance section */}
               {instanceCount > 0 && (
                 <tr className="bg-gray-50/80">
                   <td colSpan={6} className="px-4 py-1.5">
@@ -259,7 +566,7 @@ export function AlarmsPanel() {
                   </td>
                 </tr>
               )}
-              {rows.filter((r) => r.type === 'instance').map((row, i) => {
+              {instanceRows.map((row, i) => {
                 const msgEditKey = row.interfaceName && row.fieldName
                   ? `${interfaces.find((iface) => iface.name === row.interfaceName)?.id}::${
                       interfaces.find((iface) => iface.name === row.interfaceName)?.fields.find((f) => f.name === row.fieldName)?.id
@@ -269,7 +576,7 @@ export function AlarmsPanel() {
 
                 return (
                   <tr key={row.key} className="border-b border-gray-100 hover:bg-violet-50/30 transition-colors group">
-                    <td className="px-4 py-2 text-gray-400 tabular-nums">{standaloneCount + i + 1}</td>
+                    <td className="px-4 py-2 text-gray-400 tabular-nums">{standaloneCount + analogCount + i + 1}</td>
                     <td className="px-3 py-2">
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
                         <Layers size={9} /> Instance

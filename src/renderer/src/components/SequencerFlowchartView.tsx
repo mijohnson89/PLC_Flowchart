@@ -25,6 +25,7 @@ import {
   applySequencerPositions,
   SEQUENCER_OVERVIEW_SNAP_GRID
 } from '../utils/sequencerFlowGraph'
+import type { FlowPhase, PLCNode, PLCEdge } from '../types'
 import { SequencerStartNode } from './sequencer/SequencerStartNode'
 import { SequencerActionNode } from './sequencer/SequencerActionNode'
 import { SequencerJumpStubNode } from './sequencer/SequencerJumpStubNode'
@@ -46,26 +47,48 @@ function FitOnTabChange({ tabId, layoutTick }: { tabId: string; layoutTick: numb
   return null
 }
 
-export interface SequencerFlowchartViewProps {
-  readOnly?: boolean
+/** When set, shows this diagram instead of the store (e.g. revision compare pane). */
+export interface SequencerFlowchartDiagramOverride {
+  flowNodes: PLCNode[]
+  flowEdges: PLCEdge[]
+  phases: FlowPhase[]
+  sequencerViewPositions?: Record<string, { x: number; y: number }>
 }
 
-export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartViewProps) {
+export interface SequencerFlowchartViewProps {
+  readOnly?: boolean
+  diagramOverride?: SequencerFlowchartDiagramOverride
+  /** For fit-view when the canvas is not tied to the active tab (e.g. compare pane + revision id). */
+  fitViewKey?: string
+}
+
+export function SequencerFlowchartView({
+  readOnly = false,
+  diagramOverride,
+  fitViewKey
+}: SequencerFlowchartViewProps) {
   const activeTabId = useDiagramStore((s) => s.activeTabId)
   const activeTab = useDiagramStore(selectActiveTab)
-  const flowNodes = useDiagramStore(selectFlowNodes)
-  const flowEdges = useDiagramStore(selectFlowEdges)
+  const storeFlowNodes = useDiagramStore(selectFlowNodes)
+  const storeFlowEdges = useDiagramStore(selectFlowEdges)
+  const flowNodes = diagramOverride?.flowNodes ?? storeFlowNodes
+  const flowEdges = diagramOverride?.flowEdges ?? storeFlowEdges
   const isRevision = useDiagramStore(selectIsViewingRevision)
+  const lockedOverview = isRevision || !!diagramOverride
   const setPendingFocusNodeId = useDiagramStore((s) => s.setPendingFocusNodeId)
   const updateSequencerOverviewPosition = useDiagramStore((s) => s.updateSequencerOverviewPosition)
   const clearSequencerOverviewPositions = useDiagramStore((s) => s.clearSequencerOverviewPositions)
   const pushHistory = useDiagramStore((s) => s.pushHistory)
 
-  const sequencerViewPositions = isRevision ? undefined : activeTab?.sequencerViewPositions
+  const sequencerViewPositions = diagramOverride
+    ? diagramOverride.sequencerViewPositions
+    : isRevision
+      ? undefined
+      : activeTab?.sequencerViewPositions
 
   const [overviewLayoutTick, setOverviewLayoutTick] = useState(0)
 
-  const phases = activeTab?.phases ?? []
+  const phases = diagramOverride?.phases ?? activeTab?.phases ?? []
 
   const { rfNodes, rfEdges, shouldClearSavedOverviewLayout } = useMemo(() => {
     const { nodes: n, edges: e } = buildSequencerFlowGraph(flowNodes, flowEdges, phases)
@@ -80,7 +103,7 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
       position: node.position,
       data: node.data,
       // Jump stubs are positioned from layout math only — dragging breaks handle alignment with the spine.
-      draggable: !readOnly && !isRevision && node.type !== 'sequencerJump'
+      draggable: !readOnly && !lockedOverview && node.type !== 'sequencerJump'
     }))
     const edges: Edge[] = e.map((edge) => {
       const hasLabel = !!(edge.label && String(edge.label).trim())
@@ -110,15 +133,15 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
       }
     })
     return { rfNodes: nodes, rfEdges: edges, shouldClearSavedOverviewLayout: shouldClear }
-  }, [flowNodes, flowEdges, phases, sequencerViewPositions, readOnly, isRevision])
+  }, [flowNodes, flowEdges, phases, sequencerViewPositions, readOnly, lockedOverview])
 
   const empty = rfNodes.length === 0
 
   useEffect(() => {
-    if (!shouldClearSavedOverviewLayout || isRevision || readOnly) return
+    if (!shouldClearSavedOverviewLayout || lockedOverview || readOnly) return
     clearSequencerOverviewPositions()
     setOverviewLayoutTick((t) => t + 1)
-  }, [shouldClearSavedOverviewLayout, isRevision, readOnly, clearSequencerOverviewPositions])
+  }, [shouldClearSavedOverviewLayout, lockedOverview, readOnly, clearSequencerOverviewPositions])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges)
@@ -138,18 +161,18 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
 
   const onNodeDragStop = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      if (readOnly || isRevision) return
+      if (readOnly || lockedOverview) return
       updateSequencerOverviewPosition(node.id, { ...node.position })
     },
-    [readOnly, isRevision, updateSequencerOverviewPosition]
+    [readOnly, lockedOverview, updateSequencerOverviewPosition]
   )
 
   const onTidyLayout = useCallback(() => {
-    if (readOnly || isRevision || empty) return
+    if (readOnly || lockedOverview || empty) return
     clearSequencerOverviewPositions()
     pushHistory()
     setOverviewLayoutTick((t) => t + 1)
-  }, [readOnly, isRevision, empty, clearSequencerOverviewPositions, pushHistory])
+  }, [readOnly, lockedOverview, empty, clearSequencerOverviewPositions, pushHistory])
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -179,7 +202,7 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
           <button
             type="button"
             title="Reset layout: align steps in a column with Start"
-            disabled={readOnly || isRevision || empty}
+            disabled={readOnly || lockedOverview || empty}
             onClick={onTidyLayout}
             className="flex-shrink-0 text-[10px] font-semibold px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
           >
@@ -201,8 +224,8 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
             onEdgesChange={onEdgesChange}
             onNodeDragStop={onNodeDragStop}
             onNodeClick={onNodeClick}
-            nodesDraggable={!readOnly && !isRevision}
-            snapToGrid={!readOnly && !isRevision}
+            nodesDraggable={!readOnly && !lockedOverview}
+            snapToGrid={!readOnly && !lockedOverview}
             snapGrid={[SEQUENCER_OVERVIEW_SNAP_GRID, SEQUENCER_OVERVIEW_SNAP_GRID]}
             nodesConnectable={false}
             edgesReconnectable={false}
@@ -221,7 +244,7 @@ export function SequencerFlowchartView({ readOnly = false }: SequencerFlowchartV
           >
             <Background variant={BackgroundVariant.Dots} gap={SEQUENCER_OVERVIEW_SNAP_GRID} size={1} color="#cbd5e1" />
             <Controls position="bottom-right" showInteractive={false} />
-            <FitOnTabChange tabId={activeTabId} layoutTick={overviewLayoutTick} />
+            <FitOnTabChange tabId={fitViewKey ?? activeTabId} layoutTick={overviewLayoutTick} />
           </ReactFlow>
         )}
       </div>

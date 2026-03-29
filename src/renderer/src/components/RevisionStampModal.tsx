@@ -9,23 +9,23 @@ interface Props {
 }
 
 export function RevisionStampModal({ onClose }: Props) {
-  const { createRevision } = useDiagramStore()
+  const { createRevision, tabs, activeTabId } = useDiagramStore()
+  const nextRevisionNumber =
+    (tabs.find((t) => t.id === activeTabId)?.revisions.length ?? 0) + 1
 
-  const [name, setName] = useState('')
   const [author, setAuthor] = useState(() => localStorage.getItem(AUTHOR_KEY) ?? '')
   const [description, setDescription] = useState('')
-  const nameRef = useRef<HTMLInputElement>(null)
+  const authorRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    nameRef.current?.focus()
+    authorRef.current?.focus()
   }, [])
 
   function handleSubmit() {
-    const trimName = name.trim()
     const trimAuthor = author.trim()
-    if (!trimName || !trimAuthor) return
+    if (!trimAuthor) return
     localStorage.setItem(AUTHOR_KEY, trimAuthor)
-    createRevision(trimName, trimAuthor, description.trim() || undefined)
+    createRevision(trimAuthor, description.trim() || undefined)
     onClose()
   }
 
@@ -51,19 +51,12 @@ export function RevisionStampModal({ onClose }: Props) {
 
         {/* Form */}
         <div className="px-5 py-4 flex flex-col gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1">
-              Revision Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              ref={nameRef}
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              placeholder="e.g. v1.0, Initial Design, After Review…"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-            />
+          <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 mb-0.5">Revision number</p>
+            <p className="text-sm font-semibold text-emerald-900 tabular-nums">
+              {nextRevisionNumber}
+              <span className="text-xs font-normal text-emerald-700 ml-1">(assigned automatically)</span>
+            </p>
           </div>
 
           <div>
@@ -71,6 +64,7 @@ export function RevisionStampModal({ onClose }: Props) {
               Author <span className="text-red-500">*</span>
             </label>
             <input
+              ref={authorRef}
               type="text"
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
@@ -104,10 +98,10 @@ export function RevisionStampModal({ onClose }: Props) {
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!name.trim() || !author.trim()}
+            disabled={!author.trim()}
             className="px-4 py-1.5 text-sm font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            Stamp Revision
+            Stamp revision {nextRevisionNumber}
           </button>
         </div>
       </div>

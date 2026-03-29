@@ -3,19 +3,24 @@ import {
   Plus, Trash2, Search, X, Link2, GripVertical, Pencil, Info
 } from 'lucide-react'
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
-import type { PLCNode, PLCNodeData, PLCEdgeData, PackMLState, StepLink } from '../types'
-import {
-  PACKML_STATES, PACKML_WAIT_STATES, PACKML_ACTING_STATES
-} from '../types'
+import type { PLCNode, PLCNodeData, PLCEdgeData, PLCEdge, StepLink, FlowPhase, FlowStateItem } from '../types'
+import { PACKML_WAIT_STATES, PACKML_ACTING_STATES } from '../types'
+import { getStepStateVisual } from '../utils/stepStateVisual'
 import { uid } from '../utils/uid'
 import {
   BoolCell, NumericCell, PackMLBadge, computeSpans, InstanceSidebar,
   isNumericType, isControllableField, type MatrixCol, type SidebarInstance
 } from './MatrixView'
+import {
+  STEP_MATRIX_FROZEN,
+  type JumpRef,
+  collectJumpsFrom,
+  collectJumpsTo,
+  nodeLabel,
+  stepTargetBrief,
+} from '../utils/stepMatrixJumps'
 
-type JumpRef =
-  | { kind: 'edge'; id: string; targetId: string; reason: string; description: string }
-  | { kind: 'link'; id: string; targetId: string; reason: string; description: string }
+const FROZEN = STEP_MATRIX_FROZEN
 
 /** Step numbers are spaced by this increment after reorder (10, 20, 30, …). */
 const STEP_NUMBER_GAP = 10
@@ -59,48 +64,10 @@ function splitJumpConditionForDraft(reason: string): { conditionPreset: string; 
   return { conditionPreset: 'User Condition', userConditionText: reason }
 }
 
-const FROZEN = [
-  { w: 56, label: '#' },
-  { w: 140, label: 'Name' },
-  { w: 180, label: 'Description' },
-  { w: 128, label: 'PackML' },
-  { w: 168, label: 'Phases' },
-  { w: 200, label: 'Jumps To' },
-  { w: 200, label: 'Jumps From' }
-] as const
-
 function stickyLeft(colIndex: number): number {
   let x = 0
   for (let i = 0; i < colIndex; i++) x += FROZEN[i].w
   return x
-}
-
-function nodeLabel(nodes: Map<string, PLCNode>, id: string): string {
-  const n = nodes.get(id)
-  if (!n) return id
-  if (n.type === 'end') return 'End'
-  if (n.type === 'start') return 'Start'
-  const d = n.data as PLCNodeData
-  if (n.type === 'step' && d.stepNumber !== undefined) return `S${d.stepNumber} ${d.label || ''}`.trim()
-  return d.label || n.type
-}
-
-/** Compact display for jump target (step number + name). */
-function stepTargetBrief(nodes: Map<string, PLCNode>, targetId: string): {
-  num: string
-  name: string
-} {
-  const n = nodes.get(targetId)
-  if (!n) return { num: '—', name: targetId }
-  const d = n.data as PLCNodeData
-  if (n.type === 'step') {
-    const num = d.stepNumber !== undefined ? `S${d.stepNumber}` : '—'
-    const name = (d.label ?? '').trim() || '—'
-    return { num, name }
-  }
-  if (n.type === 'end') return { num: '', name: 'End' }
-  if (n.type === 'start') return { num: '', name: 'Start' }
-  return { num: '', name: (d.label || n.type).trim() || targetId }
 }
 
 type JumpEditModalState =
@@ -109,88 +76,27 @@ type JumpEditModalState =
 
 type JumpViewModalState = { jump: JumpRef; title: string }
 
-function collectJumpsTo(
-  nodeId: string,
-  data: PLCNodeData,
-  flowEdges: { id: string; source: string; target: string; label?: string; data?: PLCEdgeData }[],
-  nodes: Map<string, PLCNode>
-): JumpRef[] {
-  const out: JumpRef[] = []
-  for (const e of flowEdges) {
-    if (e.source !== nodeId) continue
-    const tgt = nodes.get(e.target)
-    if (!tgt || tgt.type === 'output' || tgt.type === 'process') continue
-    const ed = e.data as PLCEdgeData | undefined
-    const reason = ed?.condition ?? e.label ?? ''
-    const description = ed?.description ?? ''
-    out.push({ kind: 'edge', id: e.id, targetId: e.target, reason, description })
-  }
-  for (const sl of data.stepLinks ?? []) {
-    if (!nodes.has(sl.targetNodeId)) continue
-    out.push({
-      kind: 'link',
-      id: sl.id,
-      targetId: sl.targetNodeId,
-      reason: sl.reason ?? '',
-      description: sl.description ?? ''
-    })
-  }
-  const seenTgt = new Set<string>()
-  return out.filter((j) => {
-    if (seenTgt.has(j.targetId)) return false
-    seenTgt.add(j.targetId)
-    return true
-  })
-}
-
-function collectJumpsFrom(
-  nodeId: string,
-  flowEdges: { id: string; source: string; target: string; label?: string; data?: PLCEdgeData }[],
-  allStepNodes: PLCNode[]
-): JumpRef[] {
-  const out: JumpRef[] = []
-  for (const e of flowEdges) {
-    if (e.target !== nodeId) continue
-    const src = allStepNodes.find((n) => n.id === e.source)
-    if (!src || src.type !== 'step') continue
-    const d = e.data as PLCEdgeData | undefined
-    out.push({
-      kind: 'edge',
-      id: e.id,
-      targetId: e.source,
-      reason: d?.condition ?? e.label ?? '',
-      description: d?.description ?? ''
-    })
-  }
-  for (const n of allStepNodes) {
-    if (n.id === nodeId) continue
-    const d = n.data as PLCNodeData
-    for (const sl of d.stepLinks ?? []) {
-      if (sl.targetNodeId === nodeId) {
-        out.push({
-          kind: 'link',
-          id: `${n.id}::${sl.id}`,
-          targetId: n.id,
-          reason: sl.reason ?? '',
-          description: sl.description ?? ''
-        })
-      }
-    }
-  }
-  return out
-}
-
 export type StepMatrixVariant = 'stepsOnly' | 'causeEffectOnly'
+
+/** When set, the matrix shows this slice instead of the active tab / revision overlay (compare mode). */
+export interface StepMatrixDiagramOverride {
+  flowNodes: PLCNode[]
+  flowEdges: PLCEdge[]
+  phases: FlowPhase[]
+  flowStates: FlowStateItem[]
+}
 
 export interface StepMatrixViewProps {
   readOnly?: boolean
   /** Step columns only, or Cause &amp; Effect grid + instance sidebar (split diagram layout). */
   variant: StepMatrixVariant
+  diagramOverride?: StepMatrixDiagramOverride
 }
 
 export function StepMatrixView({
   readOnly = false,
-  variant
+  variant,
+  diagramOverride
 }: StepMatrixViewProps) {
   const activeTabId = useDiagramStore((s) => s.activeTabId)
   const tabs = useDiagramStore((s) => s.tabs)
@@ -208,9 +114,14 @@ export function StepMatrixView({
   const setSelectedNode = useDiagramStore((s) => s.setSelectedNode)
   const selectedNodeId = useDiagramStore((s) => s.selectedNodeId)
 
-  const flowNodes = useDiagramStore(selectFlowNodes)
-  const flowEdges = useDiagramStore(selectFlowEdges)
-  const phases = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.phases ?? [])
+  const storeFlowNodes = useDiagramStore(selectFlowNodes)
+  const storeFlowEdges = useDiagramStore(selectFlowEdges)
+  const storePhases = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.phases ?? [])
+  const storeFlowStates = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.flowStates ?? [])
+  const flowNodes = diagramOverride?.flowNodes ?? storeFlowNodes
+  const flowEdges = diagramOverride?.flowEdges ?? storeFlowEdges
+  const phases = diagramOverride?.phases ?? storePhases
+  const flowStates = diagramOverride?.flowStates ?? storeFlowStates
 
   const [search, setSearch] = useState('')
   const [reorderMode, setReorderMode] = useState(false)
@@ -357,7 +268,7 @@ export function StepMatrixView({
   }, [userInterfaces, interfaceInstances])
 
   const rowMeta = useMemo(() => {
-    return displaySteps.map((n) => ({ nodeId: n.id, stepNumber: n.data.stepNumber, packML: n.data.packMLState as PackMLState | undefined }))
+    return displaySteps.map((n) => ({ nodeId: n.id, stepNumber: n.data.stepNumber, packML: n.data.packMLState }))
   }, [displaySteps])
 
   const hiddenInstanceIds = useMemo(() => {
@@ -807,20 +718,27 @@ export function StepMatrixView({
                           value={d.packMLState ?? ''}
                           onChange={(e) => {
                             patchStep(node.id, {
-                              packMLState: (e.target.value || undefined) as PackMLState | undefined
+                              packMLState: e.target.value || undefined
                             })
                             pushHistory()
                           }}
                         >
                           <option value="">—</option>
-                          <optgroup label="Wait">
+                          {flowStates.length > 0 && (
+                            <optgroup label="Custom">
+                              {flowStates.map((st) => (
+                                <option key={st.id} value={st.id}>{st.name}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="Reference — stable">
                             {PACKML_WAIT_STATES.map((s) => (
-                              <option key={s} value={s}>{PACKML_STATES[s]?.label ?? s}</option>
+                              <option key={s} value={s}>{getStepStateVisual(s, flowStates).label}</option>
                             ))}
                           </optgroup>
-                          <optgroup label="Acting">
+                          <optgroup label="Reference — transitional">
                             {PACKML_ACTING_STATES.map((s) => (
-                              <option key={s} value={s}>{PACKML_STATES[s]?.label ?? s}</option>
+                              <option key={s} value={s}>{getStepStateVisual(s, flowStates).label}</option>
                             ))}
                           </optgroup>
                         </select>

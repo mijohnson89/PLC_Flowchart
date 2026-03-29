@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { FileText, FolderOpen, Save, Undo2, Redo2, Network, Pencil, History, BookOpen, Sheet } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { FileText, FolderOpen, Save, Undo2, Redo2, Network, History, BookOpen, Sheet, Columns2 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import { PrintReportModal } from './PrintReportModal'
 import { exportToExcel } from '../utils/exportToExcel'
@@ -7,21 +7,21 @@ import { exportToExcel } from '../utils/exportToExcel'
 interface ToolbarProps {
   showRevisions: boolean
   onToggleRevisions: () => void
+  revisionCompareOpen: boolean
+  onToggleRevisionCompare: () => void
+  canRevisionCompare: boolean
 }
 
-export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
-  const {
-    projectName, isDirty,
-    setProjectName,
-    undo, redo
-  } = useDiagramStore()
+export function Toolbar({
+  showRevisions,
+  onToggleRevisions,
+  revisionCompareOpen,
+  onToggleRevisionCompare,
+  canRevisionCompare
+}: ToolbarProps) {
+  const { undo, redo } = useDiagramStore()
 
-  const [editingName, setEditingName] = useState(false)
-  const [nameValue, setNameValue] = useState(projectName)
   const [showPrintReport, setShowPrintReport] = useState(false)
-  const nameRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { setNameValue(projectName) }, [projectName])
 
   useEffect(() => {
     const removers = [
@@ -31,6 +31,7 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
       window.api.onMenu('menu-save-as', handleSaveAs),
       window.api.onMenu('menu-print-report', () => setShowPrintReport(true)),
       window.api.onMenu('menu-export-excel', handleExportExcel),
+      window.api.onMenu('menu-import-l5k', handleImportL5K),
       window.api.onMenu('menu-undo', () => useDiagramStore.getState().undo()),
       window.api.onMenu('menu-redo', () => useDiagramStore.getState().redo())
     ]
@@ -52,8 +53,10 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
   async function handleSave() {
     const s = useDiagramStore.getState()
     if (s.currentFilePath) {
-      await window.api.saveFile(s.toProject(), s.projectName)
-      useDiagramStore.setState({ isDirty: false })
+      const result = await window.api.saveFile(s.toProject(), s.projectName, s.currentFilePath)
+      if (result.success) {
+        useDiagramStore.setState({ isDirty: false })
+      }
     } else {
       await handleSaveAs()
     }
@@ -61,7 +64,8 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
 
   async function handleSaveAs() {
     const s = useDiagramStore.getState()
-    const result = await window.api.saveFile(s.toProject(), `${s.projectName}.plcd`)
+    const defaultPath = s.currentFilePath ?? `${s.projectName}.plcd`
+    const result = await window.api.saveFile(s.toProject(), defaultPath)
     if (result.success && result.filePath) {
       s.setCurrentFilePath(result.filePath)
       useDiagramStore.setState({ isDirty: false })
@@ -78,9 +82,13 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
     }
   }
 
-  function commitName() {
-    if (nameValue.trim()) setProjectName(nameValue.trim())
-    setEditingName(false)
+  async function handleImportL5K() {
+    const r = await window.api.importL5K()
+    if (r.success && r.text != null && r.fileName) {
+      window.dispatchEvent(
+        new CustomEvent('plc-import-l5k', { detail: { fileName: r.fileName, text: r.text } })
+      )
+    }
   }
 
   return (
@@ -139,30 +147,20 @@ export function Toolbar({ showRevisions, onToggleRevisions }: ToolbarProps) {
         <span className="text-xs hidden sm:block">Revisions</span>
       </button>
 
-      {/* Project name (right side) */}
-      <div className="ml-auto flex items-center gap-1.5">
-        {editingName ? (
-          <input
-            ref={nameRef}
-            autoFocus
-            className="text-sm font-semibold text-gray-800 border-b-2 border-blue-500 bg-transparent focus:outline-none px-1"
-            value={nameValue}
-            onChange={(e) => setNameValue(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setEditingName(false) }}
-          />
-        ) : (
-          <button
-            className="flex items-center gap-1 text-sm font-semibold text-gray-800 hover:text-blue-600 transition-colors"
-            onClick={() => setEditingName(true)}
-            title="Click to rename project"
-          >
-            {projectName}
-            {isDirty && <span className="text-orange-400">●</span>}
-            <Pencil size={11} className="text-gray-400" />
-          </button>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={onToggleRevisionCompare}
+        disabled={!canRevisionCompare}
+        title={
+          canRevisionCompare
+            ? 'Side-by-side revision compare (matrix, cause & effect, or flow overview)'
+            : 'Open a flowchart tab to compare revisions'
+        }
+        className={`toolbar-btn flex items-center gap-1.5 ${revisionCompareOpen ? 'text-indigo-600 bg-indigo-50' : ''} disabled:opacity-40 disabled:pointer-events-none`}
+      >
+        <Columns2 size={15} />
+        <span className="text-xs hidden sm:block">Compare</span>
+      </button>
     </header>
 
     {showPrintReport && <PrintReportModal onClose={() => setShowPrintReport(false)} />}

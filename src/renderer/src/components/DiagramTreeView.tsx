@@ -3,10 +3,10 @@ import {
   ChevronDown, ChevronRight, Network, AlignJustify,
   FolderClosed, FolderOpen, Layers, FolderPlus,
   Pencil, Trash2, Copy, FolderInput, Plus, ClipboardList, TableProperties,
-  Building2, BellRing, FileText
+  Building2, BellRing, FileText, FolderKanban
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID, PROJECT_TAB_ID } from '../types'
 import type { DiagramTab, DiagramMode, TreeFolder } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
@@ -273,6 +273,7 @@ function InlineRenameInput({ value, onCommit, onCancel }: {
 export function DiagramTreeView() {
   const tabs = useDiagramStore((s) => s.tabs)
   const folders = useDiagramStore((s) => s.folders)
+  const projectName = useDiagramStore((s) => s.projectName)
   const activeTabId = useDiagramStore((s) => s.activeTabId)
   const setActiveTab = useDiagramStore((s) => s.setActiveTab)
 
@@ -283,6 +284,7 @@ export function DiagramTreeView() {
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
 
   const tree = useMemo(() => buildTree(folders, tabs), [folders, tabs])
+  const isProjectActive = activeTabId === PROJECT_TAB_ID
   const isInterfacesActive = activeTabId === INTERFACES_TAB_ID
   const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
@@ -369,8 +371,13 @@ export function DiagramTreeView() {
 
   return (
     <div className="flex flex-col overflow-hidden select-none flex-1 min-h-0">
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Diagrams</h2>
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2 min-w-0">
+        <h2
+          className="text-xs font-bold text-gray-800 truncate min-w-0 flex-1"
+          title={projectName || 'Untitled Project'}
+        >
+          {projectName?.trim() || 'Untitled Project'}
+        </h2>
         <button
           onClick={() => {
             const id = useDiagramStore.getState().addFolder('New Folder', null)
@@ -398,16 +405,16 @@ export function DiagramTreeView() {
           handleDropOnRoot()
         }}
       >
-        {/* Interfaces entry */}
+        {/* Project */}
         <TreeLeafButton
-          label="Interfaces"
-          icon={<Layers size={11} />}
-          isActive={isInterfacesActive}
+          label="Project"
+          icon={<FolderKanban size={11} />}
+          isActive={isProjectActive}
           depth={0}
-          onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+          onClick={() => setActiveTab(PROJECT_TAB_ID)}
         />
 
-        {/* Locations entry */}
+        {/* Locations */}
         <TreeLeafButton
           label="Locations"
           icon={<Building2 size={11} />}
@@ -416,16 +423,7 @@ export function DiagramTreeView() {
           onClick={() => setActiveTab(LOCATIONS_TAB_ID)}
         />
 
-        {/* Tasks entry */}
-        <TreeLeafButton
-          label="Tasks"
-          icon={<ClipboardList size={11} />}
-          isActive={isTasksActive}
-          depth={0}
-          onClick={() => setActiveTab(TASKS_TAB_ID)}
-        />
-
-        {/* IO Table entry */}
+        {/* IO Table */}
         <TreeLeafButton
           label="IO Table"
           icon={<TableProperties size={11} />}
@@ -434,7 +432,16 @@ export function DiagramTreeView() {
           onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
         />
 
-        {/* Alarms entry */}
+        {/* Interfaces */}
+        <TreeLeafButton
+          label="Interfaces"
+          icon={<Layers size={11} />}
+          isActive={isInterfacesActive}
+          depth={0}
+          onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+        />
+
+        {/* Alarms */}
         <TreeLeafButton
           label="Alarms"
           icon={<BellRing size={11} />}
@@ -443,7 +450,16 @@ export function DiagramTreeView() {
           onClick={() => setActiveTab(ALARMS_TAB_ID)}
         />
 
-        {/* Notes entry */}
+        {/* Tasks */}
+        <TreeLeafButton
+          label="Tasks"
+          icon={<ClipboardList size={11} />}
+          isActive={isTasksActive}
+          depth={0}
+          onClick={() => setActiveTab(TASKS_TAB_ID)}
+        />
+
+        {/* Notes */}
         <TreeLeafButton
           label="Notes"
           icon={<FileText size={11} />}
@@ -452,9 +468,11 @@ export function DiagramTreeView() {
           onClick={() => setActiveTab(NOTES_TAB_ID)}
         />
 
-        <div className="h-px bg-gray-100 mx-3 my-1" />
+        <div className="px-4 pt-3 pb-1.5 mt-1 border-t border-gray-100">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Diagrams</span>
+        </div>
 
-        {/* Tree nodes */}
+        {/* Tree nodes (flowcharts & sequences) */}
         {tree.map((node) => (
           <TreeNodeRow
             key={node.id}
@@ -640,6 +658,7 @@ function TreeNodeRow({ node, depth, activeTabId, collapsed, isOpen, toggle,
         icon={TYPE_ICON[node.tab!.type]}
         isActive={node.id === activeTabId}
         depth={depth}
+        revisionCount={node.tab!.revisions?.length ?? 0}
         isRenaming={isRenaming}
         onRenameCommit={(name) => onRenameCommit(node.id, 'tab', name)}
         onRenameCancel={onRenameCancel}
@@ -715,13 +734,15 @@ function FolderButton({ label, count, isOpen, hasActive, depth, isDropTarget,
   )
 }
 
-function TreeLeafButton({ label, icon, isActive, depth, isRenaming,
+function TreeLeafButton({ label, icon, isActive, depth, revisionCount = 0, isRenaming,
   onRenameCommit, onRenameCancel, onClick, onDoubleClick
 }: {
   label: string
   icon: React.ReactNode
   isActive: boolean
   depth: number
+  /** Number of stamped revisions for this diagram (badge when positive). */
+  revisionCount?: number
   isRenaming?: boolean
   onRenameCommit?: (name: string) => void
   onRenameCancel?: () => void
@@ -729,17 +750,18 @@ function TreeLeafButton({ label, icon, isActive, depth, isRenaming,
   onDoubleClick?: () => void
 }) {
   const pl = 20 + depth * 16
+  const revTitle = revisionCount > 0 ? `${revisionCount} revision${revisionCount !== 1 ? 's' : ''}` : undefined
   return (
     <button
       onClick={onClick}
       onDoubleClick={(e) => { e.stopPropagation(); onDoubleClick?.() }}
       style={{ paddingLeft: pl }}
-      className={`w-full flex items-center gap-2 pr-3 py-1.5 text-[11px] transition-colors ${
+      className={`w-full flex items-center gap-2 pr-3 py-1.5 text-[11px] transition-colors min-w-0 ${
         isActive
           ? 'bg-blue-50 text-blue-700 font-semibold'
           : 'text-gray-600 hover:bg-gray-50'
       }`}
-      title={label}
+      title={revTitle ? `${label} — ${revTitle}` : label}
     >
       <span className={`flex-shrink-0 ${isActive ? 'text-blue-500' : 'text-gray-400'}`}>
         {icon}
@@ -751,7 +773,21 @@ function TreeLeafButton({ label, icon, isActive, depth, isRenaming,
           onCancel={onRenameCancel!}
         />
       ) : (
-        <span className="truncate">{label}</span>
+        <>
+          <span className="truncate min-w-0 flex-1 text-left">{label}</span>
+          {revisionCount > 0 && (
+            <span
+              className={`flex-shrink-0 text-[9px] font-bold tabular-nums px-1.5 py-px rounded border ${
+                isActive
+                  ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                  : 'bg-gray-100 text-gray-600 border-gray-200'
+              }`}
+              title={revTitle}
+            >
+              R{revisionCount}
+            </span>
+          )}
+        </>
       )}
     </button>
   )

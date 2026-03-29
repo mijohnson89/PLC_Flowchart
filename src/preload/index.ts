@@ -2,9 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('api', {
   // File operations
-  saveFile: (content: unknown, defaultName?: string) =>
-    ipcRenderer.invoke('dialog:save', { content, defaultName }),
+  saveFile: (content: unknown, defaultName?: string, targetPath?: string | null) =>
+    ipcRenderer.invoke('dialog:save', { content, defaultName, targetPath: targetPath ?? undefined }),
   openFile: () => ipcRenderer.invoke('dialog:open'),
+  importL5K: () => ipcRenderer.invoke('dialog:import-l5k'),
   printReport: (html: string, defaultName?: string) =>
     ipcRenderer.invoke('print:report', { html, defaultName }),
 
@@ -31,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   onMenu: (channel: string, cb: () => void) => {
     const validChannels = [
       'menu-new', 'menu-open', 'menu-save', 'menu-save-as',
+      'menu-import-l5k',
       'menu-print-report', 'menu-export-excel',
       'menu-undo', 'menu-redo', 'menu-delete', 'menu-fit', 'menu-select-all'
     ]

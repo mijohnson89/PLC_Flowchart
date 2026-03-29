@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, Component } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Cpu, Database,
-  Tag, Settings2, X, Check, Pencil, Grid3x3, Library, Building2,
+  Tag, Settings2, X, Check, Pencil,
   BookMarked, Upload, Download, CheckCircle2, BellRing, Cable
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
@@ -10,8 +10,7 @@ import type {
   UserInterface, InterfaceInstance, InterfaceField,
   InterfaceType, AOIFieldUsage, IOType
 } from '../types'
-import { MatrixView } from './MatrixView'
-import { LocationsPanel, useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
+import { useLocationOptions, LocationBreadcrumb } from './LocationsPanel'
 import { parseL5KInterfaces, parseL5KSequences, parseL5KTasks, l5kSequenceToFlowchart, parseL5KControllerName, parseL5KProgramTags, parseL5KIOModules } from '../utils/l5kImport'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1078,9 +1077,8 @@ function LibraryPanel() {
   const [instanceSearch, setInstanceSearch] = useState('')
   const [showGlobalLib, setShowGlobalLib] = useState(false)
   const [importToast, setImportToast] = useState<string | null>(null)
-  const [dragOverL5k, setDragOverL5k] = useState(false)
   const [l5kPending, setL5kPending] = useState<{ fileName: string; text: string; ifaces: UserInterface[] } | null>(null)
-  const l5kInputRef = useRef<HTMLInputElement | null>(null)
+  const handleL5KTextRef = useRef<(fileName: string, text: string) => Promise<void>>(async () => {})
 
   function showToast(msg: string) {
     setImportToast(msg)
@@ -1170,26 +1168,6 @@ function LibraryPanel() {
       else showToast('No valid interfaces found')
     } catch {
       showToast('Import failed — check the file format')
-    }
-  }
-
-  async function handleL5KFile(file: File) {
-    const name = file.name.toLowerCase()
-    if (!name.endsWith('.l5k')) {
-      showToast('Drop a .L5K file')
-      return
-    }
-    try {
-      const text = await file.text()
-      const ifaces = parseL5KInterfaces(text)
-
-      if (ifaces.length > 0) {
-        setL5kPending({ fileName: file.name, text, ifaces })
-      } else {
-        finishL5KImport(file.name, text, [])
-      }
-    } catch {
-      showToast('L5K import failed — could not parse file')
     }
   }
 
@@ -1387,6 +1365,30 @@ function LibraryPanel() {
     }
   }
 
+  async function handleL5KText(fileName: string, text: string) {
+    try {
+      const ifaces = parseL5KInterfaces(text)
+      if (ifaces.length > 0) {
+        setL5kPending({ fileName, text, ifaces })
+      } else {
+        finishL5KImport(fileName, text, [])
+      }
+    } catch {
+      showToast('L5K import failed — could not parse file')
+    }
+  }
+
+  handleL5KTextRef.current = handleL5KText
+
+  useEffect(() => {
+    const fn = (e: Event) => {
+      const d = (e as CustomEvent<{ fileName: string; text: string }>).detail
+      void handleL5KTextRef.current(d.fileName, d.text)
+    }
+    window.addEventListener('plc-import-l5k', fn)
+    return () => window.removeEventListener('plc-import-l5k', fn)
+  }, [])
+
   async function handleSaveToLibrary(iface: UserInterface) {
     const existing = await window.api.loadLibrary()
     const updated = existing.some((e) => e.name === iface.name)
@@ -1474,46 +1476,9 @@ function LibraryPanel() {
             value={ifaceSearch}
             onChange={(e) => setIfaceSearch(e.target.value)}
           />
-          <div
-            className={`mt-2 rounded-lg border border-dashed px-3 py-2 text-[11px] transition-colors ${
-              dragOverL5k
-                ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
-                : 'border-gray-300 bg-gray-50 text-gray-500'
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault()
-              setDragOverL5k(true)
-            }}
-            onDragLeave={() => setDragOverL5k(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragOverL5k(false)
-              const file = e.dataTransfer.files?.[0]
-              if (file) void handleL5KFile(file)
-            }}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span>Drop a Studio 5000 `.L5K` file here (AOI/UDT definitions)</span>
-              <button
-                type="button"
-                className="px-2 py-1 rounded border border-gray-300 bg-white text-[10px] font-semibold text-gray-600 hover:text-indigo-600 hover:border-indigo-300"
-                onClick={() => l5kInputRef.current?.click()}
-              >
-                Select File
-              </button>
-            </div>
-            <input
-              ref={l5kInputRef}
-              type="file"
-              accept=".l5k"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void handleL5KFile(file)
-                e.currentTarget.value = ''
-              }}
-            />
-          </div>
+          <p className="mt-2 text-[10px] text-gray-400">
+            Import a Studio 5000 <span className="font-mono">.L5K</span> export via <span className="font-medium text-gray-500">File → Import L5K…</span>
+          </p>
         </div>
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {filteredIfaces.length === 0 ? (
@@ -1636,95 +1601,10 @@ function LibraryPanel() {
 
 // ── Main InterfacesPanel ───────────────────────────────────────────────────────
 
-type InterfacesSubTab = 'library' | 'locations' | 'matrix'
-
 export function InterfacesPanel() {
-  const [subTab, setSubTab] = useState<InterfacesSubTab>('library')
-  const { userInterfaces, interfaceInstances, matrixData, plants, areas, locations } = useDiagramStore()
-
-  const instanceCount   = interfaceInstances.length
-  const matrixCellCount = Object.values(matrixData).reduce((sum, step) =>
-    sum + Object.values(step).reduce((s2, inst) => s2 + Object.keys(inst).length, 0), 0
-  )
-
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-
-      {/* ── Sub-tab bar ───────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
-        <button
-          onClick={() => setSubTab('library')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            subTab === 'library'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-indigo-600'
-          }`}
-        >
-          <Library size={13} />
-          Library
-          <span className={`px-1.5 py-px rounded-full text-[10px] font-bold ${
-            subTab === 'library' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
-          }`}>
-            {userInterfaces.length}
-          </span>
-          {instanceCount > 0 && (
-            <span className={`px-1.5 py-px rounded-full text-[10px] font-bold ${
-              subTab === 'library' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {instanceCount} inst
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setSubTab('locations')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            subTab === 'locations'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-indigo-600'
-          }`}
-        >
-          <Building2 size={13} />
-          Locations
-          {plants.length > 0 && (
-            <span className={`px-1.5 py-px rounded-full text-[10px] font-bold ${
-              subTab === 'locations' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {plants.length}P · {areas.length}A · {locations.length}L
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setSubTab('matrix')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            subTab === 'matrix'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-indigo-600'
-          }`}
-        >
-          <Grid3x3 size={13} />
-          Cause &amp; Effect Matrix
-          {matrixCellCount > 0 && (
-            <span className={`px-1.5 py-px rounded-full text-[10px] font-bold ${
-              subTab === 'matrix' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {matrixCellCount}
-            </span>
-          )}
-        </button>
-
-        {subTab === 'matrix' && (
-          <p className="ml-auto text-[10px] text-gray-400 hidden sm:block">
-            Rows = Steps from flowchart tabs · Columns = Instances grouped by interface · Click cells to assign actions
-          </p>
-        )}
-      </div>
-
-      {/* ── Content ───────────────────────────────────────────────────────── */}
-      {subTab === 'library'   && <LibraryPanel />}
-      {subTab === 'locations' && <LocationsPanel />}
-      {subTab === 'matrix'    && <MatrixView />}
+      <LibraryPanel />
     </div>
   )
 }

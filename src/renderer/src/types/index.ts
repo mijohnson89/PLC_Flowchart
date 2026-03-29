@@ -32,7 +32,8 @@ export interface PLCNodeData extends Record<string, unknown> {
   tagName?: string         // for output nodes
   outputType?: 'coil' | 'move' | 'compare' | 'timer' | 'counter'
   stepNumber?: number      // for step nodes
-  packMLState?: PackMLState // optional PackML state tag for step nodes
+  /** Built-in reference state key or a custom state id from the tab's flowStates list. */
+  packMLState?: string
   actorType?: 'plc' | 'hmi' | 'device' | 'operator' | 'system'
   color?: string           // custom override color
   routineName?: string     // for process nodes
@@ -76,9 +77,9 @@ export interface SequenceMessage {
   order: number
 }
 
-// ── PackML States ─────────────────────────────────────────────────────────────
+// ── Step states (reference set + per-tab custom states) ───────────────────────
 
-/** ISA-88 / OMAC PackML state machine states */
+/** ISA-88 / OMAC reference state keys (shown as “States” in the UI). */
 export type PackMLState =
   // ── Wait states (stable — equipment stationary) ──────────────────────────
   | 'stopped' | 'idle' | 'suspended' | 'execute' | 'held' | 'complete' | 'aborted'
@@ -163,10 +164,15 @@ export interface RevisionSnapshot {
   flowEdges: PLCEdge[]
   seqActors: SequenceActor[]
   seqMessages: SequenceMessage[]
+  /** Present on stamps after this field was added; omitted in older files (compare view falls back to the live tab). */
+  phases?: FlowPhase[]
+  flowStates?: FlowStateItem[]
+  sequencerViewPositions?: Record<string, { x: number; y: number }>
 }
 
 export interface Revision {
   id: string
+  /** Display label; new stamps use auto-incrementing numbers per tab ("1", "2", …). */
   name: string
   author: string
   date: string       // ISO string
@@ -191,6 +197,17 @@ export interface Location {
   id: string
   name: string
   areaId: string
+}
+
+// ── Project (metadata + job variations) ─────────────────────────────────────
+
+export const PROJECT_TAB_ID = '__project__'
+
+export interface ProjectVariation {
+  id: string
+  variationNo: string
+  name: string
+  description?: string
 }
 
 // ── Locations ────────────────────────────────────────────────────────────────
@@ -314,9 +331,62 @@ export interface IOEntry {
 
 export const ALARMS_TAB_ID = '__alarms__'
 
+/** Manual reset requires operator acknowledgement; auto reset clears when process returns to normal. */
+export type AlarmResetMode = 'manual' | 'auto'
+
+export interface AnalogAlarmBand {
+  enabled: boolean
+  value: string
+  reset: AlarmResetMode
+}
+
+export interface AnalogAlarmHystBand {
+  enabled: boolean
+  value: string
+}
+
+export interface AnalogAlarmConfig {
+  ll: AnalogAlarmBand
+  l: AnalogAlarmBand
+  h: AnalogAlarmBand
+  hh: AnalogAlarmBand
+  llHyst: AnalogAlarmHystBand
+  lHyst: AnalogAlarmHystBand
+  hHyst: AnalogAlarmHystBand
+  hhHyst: AnalogAlarmHystBand
+}
+
+export function createDefaultAnalogAlarmConfig(): AnalogAlarmConfig {
+  const band = (): AnalogAlarmBand => ({
+    enabled: false,
+    value: '',
+    reset: 'manual',
+  })
+  const hyst = (): AnalogAlarmHystBand => ({
+    enabled: false,
+    value: '',
+  })
+  return {
+    ll: band(),
+    l: band(),
+    h: band(),
+    hh: band(),
+    llHyst: hyst(),
+    lHyst: hyst(),
+    hHyst: hyst(),
+    hhHyst: hyst(),
+  }
+}
+
+/** Once-off (default) or analog limit alarm. Omitted `alarmType` is treated as once-off. */
+export type AlarmKind = 'once-off' | 'analog'
+
 export interface Alarm {
   id: string
   description: string
+  alarmType?: AlarmKind
+  /** Required when `alarmType` is `'analog'`. */
+  analog?: AnalogAlarmConfig
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────
@@ -373,6 +443,16 @@ export interface FlowPhase {
   color?: string
 }
 
+/** User-defined step state for the active flowchart (name, color, stable vs transitional). */
+export interface FlowStateItem {
+  id: string
+  name: string
+  /** Optional badge border / accent (hex). */
+  color?: string
+  /** Matches reference states: stable vs transitional styling. */
+  category?: PackMLCategory
+}
+
 // ── Cause & Effect Matrix ─────────────────────────────────────────────────────
 
 /** Sparse 3-level map: stepNodeId → instanceId → fieldId → value */
@@ -409,6 +489,8 @@ export interface DiagramTab {
   conditions: FlowCondition[]
   /** Per flowchart tab: phases that can be assigned to steps. */
   phases?: FlowPhase[]
+  /** Per flowchart tab: custom step states (plus built-in reference states). */
+  flowStates?: FlowStateItem[]
   /**
    * Extra positions for the sequencer overview (read-only flowchart beside the matrix).
    * Keys are flow node ids (start/steps) for the overview canvas.
@@ -422,6 +504,11 @@ export interface DiagramProject {
   version: string
   name: string
   description?: string
+  projectJobNo?: string
+  customerName?: string
+  customerSite?: string
+  customerContact?: string
+  projectVariations?: ProjectVariation[]
   createdAt: string
   updatedAt: string
   tabs: DiagramTab[]
@@ -449,8 +536,11 @@ export interface DiagramProject {
 // ── Electron API ─────────────────────────────────────────────────────────────
 
 export interface ElectronAPI {
-  saveFile: (content: unknown, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
+  /** When `targetPath` is set, writes there without a dialog (save over existing file). */
+  saveFile: (content: unknown, defaultName?: string, targetPath?: string | null) => Promise<{ success: boolean; filePath?: string }>
   openFile: () => Promise<{ success: boolean; content?: DiagramProject; filePath?: string }>
+  /** Studio 5000 L5K export — same processing as former drop zone on User Interfaces. */
+  importL5K: () => Promise<{ success: boolean; text?: string; fileName?: string }>
   printReport: (html: string, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   exportExcel: (base64: string, defaultName?: string) => Promise<{ success: boolean; filePath?: string }>
   onMenu: (channel: string, cb: () => void) => () => void

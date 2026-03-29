@@ -44,6 +44,8 @@ interface AlarmOption {
   ref: string
   label: string
   group: 'standalone' | 'instance'
+  /** Standalone alarms: once-off vs analog (for section headers). */
+  standaloneKind?: 'once-off' | 'analog'
   subLabel?: string
 }
 
@@ -55,7 +57,12 @@ function useAlarmOptions(): AlarmOption[] {
   return useMemo(() => {
     const opts: AlarmOption[] = []
     for (const a of alarms) {
-      opts.push({ ref: `alarm:${a.id}`, label: a.description, group: 'standalone' })
+      opts.push({
+        ref: `alarm:${a.id}`,
+        label: a.description,
+        group: 'standalone',
+        standaloneKind: a.alarmType === 'analog' ? 'analog' : 'once-off',
+      })
     }
     for (const iface of interfaces) {
       for (const field of iface.fields) {
@@ -130,7 +137,8 @@ function AlarmLinkSelector({ currentRef, onLink, compact }: {
     : options
 
   const label = resolveAlarmLabel(currentRef, options)
-  const standaloneOpts = filtered.filter((o) => o.group === 'standalone')
+  const standaloneOpts = filtered.filter((o) => o.group === 'standalone' && o.standaloneKind !== 'analog')
+  const analogStandaloneOpts = filtered.filter((o) => o.group === 'standalone' && o.standaloneKind === 'analog')
   const instanceOpts = filtered.filter((o) => o.group === 'instance')
   const noResults = query && filtered.length === 0
 
@@ -220,6 +228,26 @@ function AlarmLinkSelector({ currentRef, onLink, compact }: {
                     }`}
                   >
                     <BellRing size={9} className="text-amber-400 flex-shrink-0" />
+                    <span className="truncate">{opt.label}</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            {analogStandaloneOpts.length > 0 && (
+              <>
+                <div className="px-3 py-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1 pt-1">
+                  Analog Alarms
+                </div>
+                {analogStandaloneOpts.map((opt) => (
+                  <button
+                    key={opt.ref}
+                    onClick={() => { onLink(opt.ref); setOpen(false) }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-emerald-50 transition-colors flex items-center gap-1.5 ${
+                      currentRef === opt.ref ? 'bg-emerald-50 text-emerald-800 font-medium' : 'text-gray-700'
+                    }`}
+                  >
+                    <BellRing size={9} className="text-emerald-500 flex-shrink-0" />
                     <span className="truncate">{opt.label}</span>
                   </button>
                 ))}

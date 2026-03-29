@@ -4,8 +4,8 @@ import {
   ChevronDown, ChevronRight, Building2, LayoutGrid, MapPin, Layers
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import type { InterfaceField, InterfaceType, MatrixCellValue, PackMLState } from '../types'
-import { PACKML_STATES } from '../types'
+import type { FlowStateItem, InterfaceField, InterfaceType, MatrixCellValue } from '../types'
+import { getStepStateVisual } from '../utils/stepStateVisual'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ interface MatrixRow {
   nodeId: string
   stepNumber?: number
   stepLabel: string
-  packMLState?: PackMLState
+  stepStateKey?: string
 }
 
 export interface SidebarInstance {
@@ -118,11 +118,20 @@ export function NumericCell({ value, onChange }: { value: MatrixCellValue; onCha
   )
 }
 
-// ── PackML badge ──────────────────────────────────────────────────────────────
+// ── Step state badge (reference + custom tab states) ───────────────────────────
 
-export function PackMLBadge({ state }: { state: PackMLState }) {
-  const def = PACKML_STATES[state]
-  if (!def) return null
+export function StepStateBadge({
+  stateKey,
+  palette
+}: {
+  stateKey?: string | null
+  /** When omitted, uses the active flowchart tab's custom states. */
+  palette?: FlowStateItem[]
+}) {
+  const activePalette = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.flowStates ?? [])
+  const pal = palette ?? activePalette
+  if (stateKey == null || stateKey === '') return null
+  const def = getStepStateVisual(stateKey, pal)
   return (
     <span
       className="inline-block px-1.5 py-px rounded text-[9px] font-semibold border"
@@ -131,6 +140,11 @@ export function PackMLBadge({ state }: { state: PackMLState }) {
       {def.label}
     </span>
   )
+}
+
+/** Back-compat wrapper for older call sites. */
+export function PackMLBadge({ state }: { state: string }) {
+  return <StepStateBadge stateKey={state} />
 }
 
 // ── Instance checkbox row ─────────────────────────────────────────────────────
@@ -534,7 +548,7 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
         nodeId: node.id,
         stepNumber: node.data.stepNumber,
         stepLabel: node.data.label,
-        packMLState: node.data.packMLState as PackMLState | undefined
+        stepStateKey: node.data.packMLState
       }))
   }, [tabs, selectedTabId])
 
@@ -661,6 +675,7 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
   }
 
   const selectedTab  = flowchartTabs.find((t) => t.id === selectedTabId)
+  const statePalette = selectedTab?.flowStates ?? []
   const stepCount    = rows.length
   const hiddenCount  = hiddenInstanceIds.size
 
@@ -809,7 +824,9 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
                           <span className="font-medium text-gray-800 leading-tight" title={row.stepLabel}>
                             {row.stepLabel}
                           </span>
-                          {row.packMLState && <PackMLBadge state={row.packMLState} />}
+                          {row.stepStateKey && (
+                            <StepStateBadge stateKey={row.stepStateKey} palette={statePalette} />
+                          )}
                         </div>
                       </div>
                     </td>
@@ -821,7 +838,7 @@ export function MatrixView({ tabId }: MatrixViewProps = {}) {
                         <td
                           key={col.key}
                           className="border-r border-b border-gray-100 text-center align-middle"
-                          style={{ minWidth: col.isNumeric ? 80 : 52, height: row.packMLState ? 48 : 36 }}
+                          style={{ minWidth: col.isNumeric ? 80 : 52, height: row.stepStateKey ? 48 : 36 }}
                         >
                           <div className="flex items-center justify-center h-full">
                             {col.isNumeric ? (

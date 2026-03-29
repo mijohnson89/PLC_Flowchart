@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2, BellRing, FileText } from 'lucide-react'
+import { Plus, X, Network, AlignJustify, Pencil, Check, Layers, ClipboardList, TableProperties, Building2, BellRing, FileText, FolderKanban } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { DiagramMode, DiagramTab } from '../types'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, ALARMS_TAB_ID, NOTES_TAB_ID, PROJECT_TAB_ID } from '../types'
 
 const TYPE_ICON: Record<DiagramMode, React.ReactNode> = {
   flowchart: <Network size={12} />,
@@ -101,6 +101,7 @@ export function TabBar() {
   const [editValue, setEditValue] = useState('')
   const editInputRef = useRef<HTMLInputElement>(null)
 
+  const isProjectActive = activeTabId === PROJECT_TAB_ID
   const isInterfacesActive = activeTabId === INTERFACES_TAB_ID
   const isLocationsActive = activeTabId === LOCATIONS_TAB_ID
   const isTasksActive = activeTabId === TASKS_TAB_ID
@@ -137,26 +138,25 @@ export function TabBar() {
     <>
       <div data-print-hide className="flex items-end bg-gray-100 border-b border-gray-200 px-2 pt-1 overflow-x-auto flex-shrink-0 min-h-[36px]">
 
-        {/* Static Interfaces tab — always first, never closeable */}
+        {/* Static tabs — order matches sidebar: Project, Locations, IO, Interfaces, Alarms, Tasks, Notes */}
         <div
-          onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+          onClick={() => setActiveTab(PROJECT_TAB_ID)}
           className={`
             flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
             text-xs whitespace-nowrap cursor-pointer select-none transition-colors
             border border-b-0
-            ${isInterfacesActive
+            ${isProjectActive
               ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
               : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
           `}
-          title="Project interfaces — AOIs, UDTs and their instances"
+          title="Project — name, customer, job details and variations"
         >
-          <span className={isInterfacesActive ? 'text-indigo-500' : 'text-gray-400'}>
-            <Layers size={12} />
+          <span className={isProjectActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <FolderKanban size={12} />
           </span>
-          <span>Interfaces</span>
+          <span>Project</span>
         </div>
 
-        {/* Static Locations tab */}
         <div
           onClick={() => setActiveTab(LOCATIONS_TAB_ID)}
           className={`
@@ -175,26 +175,6 @@ export function TabBar() {
           <span>Locations</span>
         </div>
 
-        {/* Static Tasks tab */}
-        <div
-          onClick={() => setActiveTab(TASKS_TAB_ID)}
-          className={`
-            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
-            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
-            border border-b-0
-            ${isTasksActive
-              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
-              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
-          `}
-          title="Task tracking — design, program and test progress"
-        >
-          <span className={isTasksActive ? 'text-indigo-500' : 'text-gray-400'}>
-            <ClipboardList size={12} />
-          </span>
-          <span>Tasks</span>
-        </div>
-
-        {/* Static IO Table tab */}
         <div
           onClick={() => setActiveTab(IO_TABLE_TAB_ID)}
           className={`
@@ -213,7 +193,24 @@ export function TabBar() {
           <span>IO Table</span>
         </div>
 
-        {/* Static Alarms tab */}
+        <div
+          onClick={() => setActiveTab(INTERFACES_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isInterfacesActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Project interfaces — AOIs, UDTs and their instances"
+        >
+          <span className={isInterfacesActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <Layers size={12} />
+          </span>
+          <span>Interfaces</span>
+        </div>
+
         <div
           onClick={() => setActiveTab(ALARMS_TAB_ID)}
           className={`
@@ -224,7 +221,7 @@ export function TabBar() {
               ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
               : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
           `}
-          title="Alarms — once-off and per-instance alarms"
+          title="Alarms — once-off, analog, and per-instance alarms"
         >
           <span className={isAlarmsActive ? 'text-indigo-500' : 'text-gray-400'}>
             <BellRing size={12} />
@@ -232,7 +229,24 @@ export function TabBar() {
           <span>Alarms</span>
         </div>
 
-        {/* Static Notes tab */}
+        <div
+          onClick={() => setActiveTab(TASKS_TAB_ID)}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 mr-1 rounded-t-lg
+            text-xs whitespace-nowrap cursor-pointer select-none transition-colors
+            border border-b-0
+            ${isTasksActive
+              ? 'bg-white text-indigo-700 font-semibold border-gray-200 shadow-sm z-10'
+              : 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200 hover:text-indigo-600'}
+          `}
+          title="Task tracking — design, program and test progress"
+        >
+          <span className={isTasksActive ? 'text-indigo-500' : 'text-gray-400'}>
+            <ClipboardList size={12} />
+          </span>
+          <span>Tasks</span>
+        </div>
+
         <div
           onClick={() => setActiveTab(NOTES_TAB_ID)}
           className={`

@@ -2,8 +2,15 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Printer } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
-import { PACKML_STATES } from '../types'
-import type { DiagramTab, UserInterface, InterfaceInstance, Plant, Area, Location, MatrixData, Task, Alarm, IORack, IOSlot, IOEntry } from '../types'
+import { formatStepStateLabel } from '../utils/stepStateVisual'
+import type { DiagramTab, UserInterface, InterfaceInstance, Plant, Area, Location, MatrixData, Task, Alarm, IORack, IOSlot, IOEntry, PLCNode, PLCNodeData } from '../types'
+import {
+  STEP_MATRIX_FROZEN,
+  collectJumpsFrom,
+  collectJumpsTo,
+  stepTargetBrief,
+  type JumpRef,
+} from '../utils/stepMatrixJumps'
 
 // ── Shared print table styles ─────────────────────────────────────────────────
 
@@ -51,6 +58,30 @@ function locationBreadcrumb(
   return locationBreadcrumbRaw(locationId, locations, areas, plants) || '—'
 }
 
+/** Flowchart tab paired with a sequence: explicit task link, same name, or auto-gen subtask. */
+function resolveLinkedFlowchartTab(
+  sequenceTab: DiagramTab,
+  tasks: Task[],
+  flowchartTabs: DiagramTab[]
+): DiagramTab | undefined {
+  const fromTask = tasks.find((t) => t.sequenceTabId === sequenceTab.id && t.flowchartTabId)
+  if (fromTask?.flowchartTabId) {
+    const fc = flowchartTabs.find((t) => t.id === fromTask.flowchartTabId)
+    if (fc) return fc
+  }
+  const byName = flowchartTabs.find((t) => t.name === sequenceTab.name)
+  if (byName) return byName
+  for (const task of tasks) {
+    for (const sub of task.subTasks) {
+      if (sub.name === sequenceTab.name && sub.linkedTabId) {
+        const fc = flowchartTabs.find((t) => t.id === sub.linkedTabId)
+        if (fc) return fc
+      }
+    }
+  }
+  return undefined
+}
+
 // ── Report options types ──────────────────────────────────────────────────────
 
 interface TabReportOptions {
@@ -70,6 +101,142 @@ interface ReportOptions {
   showTasks: boolean
   showAlarms: boolean
   showNotes: boolean
+}
+
+// ── Flowchart steps table (shared: flowchart pages + sequence “linked flowchart” block) ──
+
+function FlowchartNodesStepsTable({ tab }: { tab: DiagramTab }) {
+  const steps = tab.flowNodes
+    .filter((n) => !['start', 'end'].includes(n.type ?? ''))
+    .sort((a, b) => (a.data.stepNumber ?? 999) - (b.data.stepNumber ?? 999))
+  if (steps.length === 0) return null
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead>
+        <tr>
+          <th style={TH}>Step #</th>
+          <th style={TH}>Type</th>
+          <th style={TH}>Label</th>
+          <th style={TH}>State</th>
+          <th style={TH}>Tag / Routine</th>
+          <th style={TH}>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {steps.map((node, i) => (
+          <tr key={node.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+            <td style={TD}>{node.data.stepNumber ?? '—'}</td>
+            <td style={TD}>{node.type}</td>
+            <td style={{ ...TD, fontWeight: 'bold' }}>{node.data.label}</td>
+            <td style={TD}>
+              {node.data.packMLState
+                ? formatStepStateLabel(node.data.packMLState, tab.flowStates)
+                : '—'}
+            </td>
+            <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>
+              {node.data.tagName ?? node.data.routineName ?? '—'}
+            </td>
+            <td style={TD}>{node.data.description || '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** Same columns as the Step Matrix pane (sequence diagram, steps-only). */
+function PrintJumpBlock({ jumps, nodeMap }: { jumps: JumpRef[]; nodeMap: Map<string, PLCNode> }) {
+  if (jumps.length === 0) return <span style={{ color: '#aaa' }}>—</span>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {jumps.map((j) => {
+        const brief = stepTargetBrief(nodeMap, j.targetId)
+        const targetLine = [brief.num, brief.name].filter(Boolean).join(' ')
+        return (
+          <div
+            key={`${j.kind}-${j.id}`}
+            style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '3px',
+              padding: '3px 5px',
+              backgroundColor: '#fafafa',
+              fontSize: '8px',
+            }}
+          >
+            {j.reason.trim() ? (
+              <div style={{ fontWeight: 'bold', marginBottom: '2px', color: '#374151' }}>{j.reason}</div>
+            ) : null}
+            <div style={{ fontFamily: 'monospace', color: '#1e3a8a' }}>{targetLine}</div>
+            {j.description.trim() ? (
+              <div style={{ marginTop: '2px', color: '#6b7280', fontStyle: 'italic' }}>{j.description}</div>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function StepMatrixStyleFlowchartTable({ tab }: { tab: DiagramTab }) {
+  const flowNodes = tab.flowNodes
+  const nodeMap = new Map(flowNodes.map((n) => [n.id, n]))
+  const stepNodes = flowNodes
+    .filter((n) => n.type === 'step')
+    .sort((a, b) => (a.data.stepNumber ?? 0) - (b.data.stepNumber ?? 0))
+  const phases = tab.phases ?? []
+  const flowStates = tab.flowStates ?? []
+
+  if (stepNodes.length === 0) return null
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+      <thead>
+        <tr>
+          {STEP_MATRIX_FROZEN.map((c) => (
+            <th key={c.label} style={{ ...TH, width: `${c.w}px` }}>
+              {c.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {stepNodes.map((node, i) => {
+          const d = node.data as PLCNodeData
+          const jumpsTo = collectJumpsTo(node.id, d, tab.flowEdges, nodeMap)
+          const jumpsFrom = collectJumpsFrom(node.id, tab.flowEdges, stepNodes)
+          const phaseLabel =
+            phases.length === 0
+              ? '—'
+              : phases
+                  .filter((p) => (d.phaseIds ?? []).includes(p.id))
+                  .map((p) => p.name)
+                  .join(', ') || '—'
+          const pack =
+            d.packMLState != null && d.packMLState !== ''
+              ? formatStepStateLabel(d.packMLState, flowStates)
+              : '—'
+          const stepCol =
+            d.stepNumber !== undefined ? `S${d.stepNumber}` : '—'
+
+          return (
+            <tr key={node.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+              <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{stepCol}</td>
+              <td style={{ ...TD, fontWeight: 'bold' }}>{(d.label ?? '').trim() || '—'}</td>
+              <td style={TD}>{(d.description ?? '').trim() || '—'}</td>
+              <td style={TD}>{pack}</td>
+              <td style={TD}>{phaseLabel}</td>
+              <td style={TD}>
+                <PrintJumpBlock jumps={jumpsTo} nodeMap={nodeMap} />
+              </td>
+              <td style={TD}>
+                <PrintJumpBlock jumps={jumpsFrom} nodeMap={nodeMap} />
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
 }
 
 // ── FlowchartSection ──────────────────────────────────────────────────────────
@@ -105,36 +272,7 @@ function FlowchartSection({
       {opts.showContent && steps.length > 0 && (
         <div>
           <h3 style={SUB_HEADING}>Nodes &amp; Steps</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={TH}>Step #</th>
-                <th style={TH}>Type</th>
-                <th style={TH}>Label</th>
-                <th style={TH}>PackML State</th>
-                <th style={TH}>Tag / Routine</th>
-                <th style={TH}>Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {steps.map((node, i) => (
-                <tr key={node.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
-                  <td style={TD}>{node.data.stepNumber ?? '—'}</td>
-                  <td style={TD}>{node.type}</td>
-                  <td style={{ ...TD, fontWeight: 'bold' }}>{node.data.label}</td>
-                  <td style={TD}>
-                    {node.data.packMLState
-                      ? (PACKML_STATES[node.data.packMLState]?.label ?? node.data.packMLState)
-                      : '—'}
-                  </td>
-                  <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>
-                    {node.data.tagName ?? node.data.routineName ?? '—'}
-                  </td>
-                  <td style={TD}>{node.data.description || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <FlowchartNodesStepsTable tab={tab} />
         </div>
       )}
 
@@ -230,7 +368,7 @@ function FlowchartSection({
                       </td>
                       <td style={TD}>
                         {step.data.packMLState
-                          ? (PACKML_STATES[step.data.packMLState]?.label ?? step.data.packMLState)
+                          ? formatStepStateLabel(step.data.packMLState, tab.flowStates)
                           : '—'}
                       </td>
                       {cols.map((col) => {
@@ -348,8 +486,22 @@ function ConditionsSubSection({ conditions }: { conditions: import('../types').F
 
 // ── SequenceSection ───────────────────────────────────────────────────────────
 
-function SequenceSection({ tab, opts }: { tab: DiagramTab; opts: TabReportOptions }) {
+function SequenceSection({
+  tab,
+  opts,
+  flowchartTabs,
+  tasks,
+}: {
+  tab: DiagramTab
+  opts: TabReportOptions
+  flowchartTabs: DiagramTab[]
+  tasks: Task[]
+}) {
   const sortedMessages = [...tab.seqMessages].sort((a, b) => a.order - b.order)
+  const linkedFlowchart = resolveLinkedFlowchartTab(tab, tasks, flowchartTabs)
+  const linkedStepCount = linkedFlowchart
+    ? linkedFlowchart.flowNodes.filter((n) => n.type === 'step').length
+    : 0
 
   return (
     <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
@@ -415,6 +567,23 @@ function SequenceSection({ tab, opts }: { tab: DiagramTab; opts: TabReportOption
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {linkedFlowchart && (
+            <div style={{ marginTop: '20px', pageBreakInside: 'avoid' }}>
+              <h3 style={SUB_HEADING}>Flowchart: {linkedFlowchart.name}</h3>
+              <div style={{ fontSize: '9px', color: '#666', marginBottom: '8px' }}>
+                Step matrix columns · {linkedStepCount} step{linkedStepCount !== 1 ? 's' : ''} ·{' '}
+                {linkedFlowchart.flowEdges.length} connection{linkedFlowchart.flowEdges.length !== 1 ? 's' : ''}
+              </div>
+              {linkedStepCount > 0 ? (
+                <StepMatrixStyleFlowchartTable tab={linkedFlowchart} />
+              ) : (
+                <div style={{ fontSize: '9px', color: '#888', fontStyle: 'italic' }}>
+                  No steps in this flowchart (Step matrix lists step nodes only).
+                </div>
+              )}
             </div>
           )}
         </>
@@ -631,6 +800,27 @@ function TasksSection({ tasks }: { tasks: Task[] }) {
 
 // ── AlarmsSection ────────────────────────────────────────────────────────────
 
+function formatAnalogAlarmSummary(alarm: Alarm): string {
+  if (alarm.alarmType !== 'analog' || !alarm.analog) return ''
+  const a = alarm.analog
+  const parts: string[] = []
+  const band = (label: string, b: { enabled: boolean; value: string; reset: string }) => {
+    if (b.enabled) parts.push(`${label}=${b.value || '—'} (${b.reset})`)
+  }
+  band('LL', a.ll)
+  band('L', a.l)
+  band('H', a.h)
+  band('HH', a.hh)
+  const h = (label: string, x: { enabled: boolean; value: string }) => {
+    if (x.enabled) parts.push(`${label}=${x.value || '—'}`)
+  }
+  h('LL-Hyst', a.llHyst)
+  h('L-Hyst', a.lHyst)
+  h('H-Hyst', a.hHyst)
+  h('HH-Hyst', a.hhHyst)
+  return parts.length ? parts.join(' · ') : 'No limits enabled'
+}
+
 function AlarmsSection({
   alarms,
   userInterfaces,
@@ -640,10 +830,24 @@ function AlarmsSection({
   userInterfaces: UserInterface[]
   interfaceInstances: InterfaceInstance[]
 }) {
-  const rows: { key: string; type: string; message: string; source: string; field: string }[] = []
+  const rows: { key: string; type: string; message: string; source: string; field: string; detail?: string }[] = []
 
-  for (const alarm of alarms) {
+  const onceOff = alarms.filter((a) => a.alarmType !== 'analog')
+  const analogList = alarms.filter((a) => a.alarmType === 'analog')
+
+  for (const alarm of onceOff) {
     rows.push({ key: `s-${alarm.id}`, type: 'Once-off', message: alarm.description, source: '—', field: '—' })
+  }
+
+  for (const alarm of analogList) {
+    rows.push({
+      key: `a-${alarm.id}`,
+      type: 'Analog',
+      message: alarm.description,
+      source: '—',
+      field: '—',
+      detail: formatAnalogAlarmSummary(alarm),
+    })
   }
 
   for (const iface of userInterfaces) {
@@ -675,11 +879,13 @@ function AlarmsSection({
 
   if (rows.length === 0) return null
 
+  const perInstanceCount = rows.length - onceOff.length - analogList.length
+
   return (
     <div style={{ pageBreakBefore: 'always', fontFamily: 'Arial, sans-serif' }}>
       <h2 style={SECTION_HEADING}>Alarms</h2>
       <div style={{ fontSize: '9px', color: '#666', marginBottom: '16px' }}>
-        {rows.length} alarm{rows.length !== 1 ? 's' : ''} — {alarms.length} once-off · {rows.length - alarms.length} per-instance
+        {rows.length} alarm{rows.length !== 1 ? 's' : ''} — {onceOff.length} once-off · {analogList.length} analog · {perInstanceCount} per-instance
       </div>
 
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -702,13 +908,22 @@ function AlarmsSection({
                   padding: '1px 5px',
                   borderRadius: '3px',
                   fontWeight: 'bold',
-                  backgroundColor: row.type === 'Once-off' ? '#fef3c7' : '#e0e7ff',
-                  color: row.type === 'Once-off' ? '#92400e' : '#3730a3',
+                  backgroundColor:
+                    row.type === 'Once-off' ? '#fef3c7' : row.type === 'Analog' ? '#d1fae5' : '#e0e7ff',
+                  color:
+                    row.type === 'Once-off' ? '#92400e' : row.type === 'Analog' ? '#065f46' : '#3730a3',
                 }}>
                   {row.type}
                 </span>
               </td>
-              <td style={{ ...TD, fontWeight: 'bold' }}>{row.message}</td>
+              <td style={{ ...TD, fontWeight: 'bold' }}>
+                {row.message}
+                {row.detail && (
+                  <div style={{ fontSize: '8px', fontWeight: 'normal', color: '#666', marginTop: '4px' }}>
+                    {row.detail}
+                  </div>
+                )}
+              </td>
               <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{row.source}</td>
               <td style={{ ...TD, fontFamily: 'monospace', fontSize: '8px' }}>{row.field}</td>
             </tr>
@@ -883,7 +1098,15 @@ function ReportDocument({ options }: { options: ReportOptions }) {
       {sequenceTabs.map((tab) => {
         const opts = options.tabOptions[tab.id]
         if (!opts?.include) return null
-        return <SequenceSection key={tab.id} tab={tab} opts={opts} />
+        return (
+          <SequenceSection
+            key={tab.id}
+            tab={tab}
+            opts={opts}
+            flowchartTabs={flowchartTabs}
+            tasks={tasks}
+          />
+        )
       })}
 
       {/* ── Interface Library ── */}
@@ -1335,7 +1558,7 @@ export function PrintReportModal({ onClose }: Props) {
                       <SubCheck
                         checked={opts.showContent}
                         onChange={(v) => setTabOpt(tab.id, 'showContent', v)}
-                        label="Actors & Messages"
+                        label="Actors, messages & linked flowchart (Step matrix columns)"
                       />
                       <SubCheck
                         checked={opts.showRevisions}
@@ -1384,7 +1607,7 @@ export function PrintReportModal({ onClose }: Props) {
                 checked={options.showAlarms}
                 onChange={(v) => setOptions((p) => ({ ...p, showAlarms: v }))}
                 label="Alarms"
-                hint={`${alarms.length} once-off alarm${alarms.length !== 1 ? 's' : ''} + per-instance alarms from interfaces`}
+                hint={`${alarms.filter((a) => a.alarmType !== 'analog').length} once-off · ${alarms.filter((a) => a.alarmType === 'analog').length} analog + per-instance from interfaces`}
               />
               <CheckRow
                 checked={options.showNotes}

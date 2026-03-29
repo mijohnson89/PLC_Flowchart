@@ -1,6 +1,7 @@
 import { useDiagramStore, selectFlowNodes, selectFlowEdges } from '../store/diagramStore'
-import type { PLCNodeData, PLCNodeType, PackMLState, StepLink } from '../types'
-import { PACKML_STATES, PACKML_WAIT_STATES, PACKML_ACTING_STATES, INTERFACES_TAB_ID } from '../types'
+import type { PLCNodeData, PLCNodeType, StepLink } from '../types'
+import { PACKML_WAIT_STATES, PACKML_ACTING_STATES, INTERFACES_TAB_ID } from '../types'
+import { getStepStateVisual } from '../utils/stepStateVisual'
 import { Trash2, Link2, X, Plus, ArrowRight } from 'lucide-react'
 
 const ACTOR_TYPES = ['plc', 'hmi', 'device', 'operator', 'system'] as const
@@ -76,6 +77,7 @@ export function PropertiesPanel() {
 
   const allTabs = useDiagramStore((s) => s.tabs)
   const activeTabId = useDiagramStore((s) => s.activeTabId)
+  const flowStates = useDiagramStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.flowStates ?? [])
 
   // Tabs available for cross-diagram linking (exclude Interfaces tab and current tab)
   const linkableTabs = allTabs.filter(
@@ -166,29 +168,35 @@ export function PropertiesPanel() {
         )}
 
         {nodeType === 'step' && (
-          <Field label="PackML State">
+          <Field label="State">
             <div className="flex flex-col gap-1.5">
               <select
                 className="w-full border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-800 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 value={data.packMLState ?? ''}
-                onChange={(e) => patchNode({ packMLState: (e.target.value || undefined) as PackMLState | undefined })}
+                onChange={(e) => patchNode({ packMLState: e.target.value || undefined })}
               >
                 <option value="">— None —</option>
-                <optgroup label="Wait States (stable)">
+                {flowStates.length > 0 && (
+                  <optgroup label="Custom">
+                    {flowStates.map((st) => (
+                      <option key={st.id} value={st.id}>{st.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label="Reference — stable">
                   {PACKML_WAIT_STATES.map((s) => (
-                    <option key={s} value={s}>{PACKML_STATES[s].label}</option>
+                    <option key={s} value={s}>{getStepStateVisual(s, flowStates).label}</option>
                   ))}
                 </optgroup>
-                <optgroup label="Acting States (transitional)">
+                <optgroup label="Reference — transitional">
                   {PACKML_ACTING_STATES.map((s) => (
-                    <option key={s} value={s}>{PACKML_STATES[s].label}</option>
+                    <option key={s} value={s}>{getStepStateVisual(s, flowStates).label}</option>
                   ))}
                 </optgroup>
               </select>
 
-              {/* Live preview of the selected state badge */}
               {data.packMLState && (() => {
-                const def = PACKML_STATES[data.packMLState]
+                const def = getStepStateVisual(data.packMLState, flowStates)
                 return (
                   <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-gray-50 border border-gray-100">
                     <span
@@ -204,7 +212,7 @@ export function PropertiesPanel() {
                       {def.label}
                     </span>
                     <span className="text-[10px] text-gray-400">
-                      {def.category === 'acting' ? 'Acting (transitional)' : 'Wait (stable)'}
+                      {def.category === 'acting' ? 'Transitional' : 'Stable'}
                     </span>
                   </div>
                 )

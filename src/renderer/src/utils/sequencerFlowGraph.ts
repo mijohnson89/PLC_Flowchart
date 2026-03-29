@@ -66,7 +66,7 @@ const W_STEP = 192
 const W_START = 96
 const H_START = 46
 const H_STEP_COMPACT = 96
-/** Flow overview step node: header + description lines + PackML row (see SequencerActionNode). */
+/** Flow overview step node: header + description lines + state row (see SequencerActionNode). */
 const H_SEQ_HEADER = 40
 const H_SEQ_DESC_LINE = 12
 const H_SEQ_DESC_MAX_LINES = 5

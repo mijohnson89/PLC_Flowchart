@@ -11,11 +11,12 @@ import type {
   TreeFolder,
   Task, SubTask, TaskAutoGenSettings,
   IORack, IOSlot, IOEntry,
-  FlowCondition, ConditionCause, ConditionAction, FlowPhase,
+  FlowCondition, ConditionCause, ConditionAction, FlowPhase, FlowStateItem,
   Alarm,
   NoteItem, NoteItemType, NoteFolder,
+  ProjectVariation,
 } from '../types'
-import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID } from '../types'
+import { INTERFACES_TAB_ID, LOCATIONS_TAB_ID, TASKS_TAB_ID, IO_TABLE_TAB_ID, PROJECT_TAB_ID } from '../types'
 
 const PROJECT_VERSION = '2.0'
 import { uid } from '../utils/uid'
@@ -52,6 +53,7 @@ function emptyTab(name: string, type: DiagramMode): DiagramTab {
     pageOrientation: 'portrait',
     conditions: [],
     phases: [],
+    flowStates: [],
     sequencerViewPositions: {}
   }
 }
@@ -192,6 +194,22 @@ interface DiagramStore {
   setProjectName: (name: string) => void
   setCurrentFilePath: (path: string | null) => void
 
+  // ── Project metadata (Project tab) ─────────────────────────────────────────
+  projectDescription: string
+  projectJobNo: string
+  customerName: string
+  customerSite: string
+  customerContact: string
+  projectVariations: ProjectVariation[]
+  setProjectDescription: (v: string) => void
+  setProjectJobNo: (v: string) => void
+  setCustomerName: (v: string) => void
+  setCustomerSite: (v: string) => void
+  setCustomerContact: (v: string) => void
+  addProjectVariation: () => string
+  updateProjectVariation: (id: string, patch: Partial<Pick<ProjectVariation, 'variationNo' | 'name' | 'description'>>) => void
+  removeProjectVariation: (id: string) => void
+
   // ── Tabs ───────────────────────────────────────────────────────────────────
   tabs: DiagramTab[]
   activeTabId: string
@@ -249,9 +267,15 @@ interface DiagramStore {
   updatePhase: (id: string, patch: Partial<Pick<FlowPhase, 'name' | 'color'>>) => void
   removePhase: (id: string) => void
 
+  // ── Custom step states (flowchart tab — palette + step assignment) ───────────
+  addFlowState: () => void
+  updateFlowState: (id: string, patch: Partial<Pick<FlowStateItem, 'name' | 'color' | 'category'>>) => void
+  removeFlowState: (id: string) => void
+
   // ── Revision History ───────────────────────────────────────────────────────
   viewingRevisionId: string | null
-  createRevision: (name: string, author: string, description?: string) => void
+  /** Author + optional notes; revision name is auto (1, 2, 3, …) per diagram tab. */
+  createRevision: (author: string, description?: string) => void
   setViewingRevision: (id: string | null) => void
 
   // ── Selection ──────────────────────────────────────────────────────────────
@@ -337,7 +361,7 @@ interface DiagramStore {
   // ── Alarms ────────────────────────────────────────────────────────────────
   alarms: Alarm[]
   addAlarm: (alarm: Alarm) => void
-  updateAlarm: (id: string, patch: Partial<Pick<Alarm, 'description'>>) => void
+  updateAlarm: (id: string, patch: Partial<Omit<Alarm, 'id'>>) => void
   removeAlarm: (id: string) => void
 
   // ── Notes ─────────────────────────────────────────────────────────────────
@@ -371,6 +395,28 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   currentFilePath: null,
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
   setCurrentFilePath: (path) => set({ currentFilePath: path }),
+
+  projectDescription: '',
+  projectJobNo: '',
+  customerName: '',
+  customerSite: '',
+  customerContact: '',
+  projectVariations: [],
+  setProjectDescription: (v) => set({ projectDescription: v, isDirty: true }),
+  setProjectJobNo: (v) => set({ projectJobNo: v, isDirty: true }),
+  setCustomerName: (v) => set({ customerName: v, isDirty: true }),
+  setCustomerSite: (v) => set({ customerSite: v, isDirty: true }),
+  setCustomerContact: (v) => set({ customerContact: v, isDirty: true }),
+  addProjectVariation: () => {
+    const id = uid('var')
+    const row: ProjectVariation = { id, variationNo: '', name: '', description: '' }
+    set((s) => ({ projectVariations: [...s.projectVariations, row], isDirty: true }))
+    return id
+  },
+  updateProjectVariation: (id, patch) =>
+    set((s) => ({ projectVariations: updateById(s.projectVariations, id, patch), isDirty: true })),
+  removeProjectVariation: (id) =>
+    set((s) => ({ projectVariations: removeById(s.projectVariations, id), isDirty: true })),
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
   tabs: initialTabs,
@@ -453,7 +499,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     selectedNodeId: null,
     selectedEdgeId: null,
     viewingRevisionId: null,
-    openTabIds: id !== INTERFACES_TAB_ID && id !== LOCATIONS_TAB_ID && id !== TASKS_TAB_ID && id !== IO_TABLE_TAB_ID && !s.openTabIds.includes(id)
+    openTabIds: id !== INTERFACES_TAB_ID && id !== LOCATIONS_TAB_ID && id !== TASKS_TAB_ID && id !== IO_TABLE_TAB_ID && id !== PROJECT_TAB_ID && !s.openTabIds.includes(id)
       ? [...s.openTabIds, id]
       : s.openTabIds
   })),
@@ -962,16 +1008,64 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     get().pushHistory()
   },
 
+  addFlowState: () => {
+    const { tabs, activeTabId, pushHistory } = get()
+    const tab = tabs.find((t) => t.id === activeTabId)
+    if (!tab || tab.type !== 'flowchart') return
+    const presets = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316']
+    const flowStates = tab.flowStates ?? []
+    const item: FlowStateItem = {
+      id: uid('fstate'),
+      name: `State ${flowStates.length + 1}`,
+      color: presets[flowStates.length % presets.length],
+      category: 'wait'
+    }
+    set((s) => ({
+      tabs: patchActive(s.tabs, s.activeTabId, { flowStates: [...flowStates, item] }),
+      isDirty: true
+    }))
+    pushHistory()
+  },
+
+  updateFlowState: (id, patch) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      const flowStates = (tab.flowStates ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x))
+      return { tabs: patchActive(s.tabs, s.activeTabId, { flowStates }), isDirty: true }
+    })
+  },
+
+  removeFlowState: (id) => {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === s.activeTabId)
+      if (!tab) return s
+      const flowStates = (tab.flowStates ?? []).filter((x) => x.id !== id)
+      const flowNodes = tab.flowNodes.map((n) => {
+        if (n.type !== 'step') return n
+        const d = n.data as PLCNodeData
+        if (d.packMLState !== id) return n
+        return { ...n, data: { ...d, packMLState: undefined } as PLCNodeData }
+      })
+      return {
+        tabs: patchActive(s.tabs, s.activeTabId, { flowStates, flowNodes }),
+        isDirty: true
+      }
+    })
+    get().pushHistory()
+  },
+
   // ── Revision History ───────────────────────────────────────────────────────
   viewingRevisionId: null,
 
-  createRevision: (name, author, description) => {
+  createRevision: (author, description) => {
     const { tabs, activeTabId } = get()
     const tab = tabs.find((t) => t.id === activeTabId)
     if (!tab) return
+    const nextNum = (tab.revisions?.length ?? 0) + 1
     const revision: Revision = {
       id: `rev_${Date.now()}`,
-      name,
+      name: String(nextNum),
       author,
       date: new Date().toISOString(),
       description,
@@ -979,7 +1073,10 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         flowNodes: JSON.parse(JSON.stringify(tab.flowNodes)),
         flowEdges: JSON.parse(JSON.stringify(tab.flowEdges)),
         seqActors: JSON.parse(JSON.stringify(tab.seqActors)),
-        seqMessages: JSON.parse(JSON.stringify(tab.seqMessages))
+        seqMessages: JSON.parse(JSON.stringify(tab.seqMessages)),
+        phases: JSON.parse(JSON.stringify(tab.phases ?? [])),
+        flowStates: JSON.parse(JSON.stringify(tab.flowStates ?? [])),
+        sequencerViewPositions: JSON.parse(JSON.stringify(tab.sequencerViewPositions ?? {}))
       }
     }
     set((s) => ({
@@ -1601,7 +1698,13 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       alarms: [],
       noteItems: [],
       noteFolders: [],
-      activeNoteId: null
+      activeNoteId: null,
+      projectDescription: '',
+      projectJobNo: '',
+      customerName: '',
+      customerSite: '',
+      customerContact: '',
+      projectVariations: []
     })
   },
 
@@ -1612,9 +1715,10 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     if (project.tabs) {
       tabs = project.tabs.map((t) => ({
         revisions: [], pageSize: null, pageOrientation: 'portrait' as PageOrientation,
-        folderId: null, sortIndex: 0, conditions: [], phases: [],
+        folderId: null, sortIndex: 0, conditions: [], phases: [], flowStates: [],
         ...t,
         phases: t.phases ?? [],
+        flowStates: t.flowStates ?? [],
         sequencerViewPositions: t.sequencerViewPositions ?? {}
       }))
       activeTabId = project.activeTabId ?? project.tabs[0]?.id
@@ -1637,8 +1741,14 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       tabs = migratedTabs
     }
 
+    const legacyProgramName = (project as { programName?: string }).programName?.trim()
+    const resolvedProjectName =
+      project.name?.trim() ||
+      legacyProgramName ||
+      'Untitled Project'
+
     set({
-      projectName: project.name,
+      projectName: resolvedProjectName,
       isDirty: false,
       currentFilePath: filePath,
       tabs,
@@ -1672,15 +1782,32 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         return []
       })(),
       noteFolders: project.noteFolders ?? [],
-      activeNoteId: null
+      activeNoteId: null,
+      projectDescription: project.description ?? '',
+      projectJobNo: project.projectJobNo ?? '',
+      customerName: project.customerName ?? '',
+      customerSite: project.customerSite ?? '',
+      customerContact: project.customerContact ?? '',
+      projectVariations: project.projectVariations ?? []
     })
   },
 
   toProject: (): DiagramProject => {
-    const { projectName, tabs, folders, activeTabId, openTabIds, plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances, ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen, alarms, noteItems, noteFolders } = get()
+    const {
+      projectName, tabs, folders, activeTabId, openTabIds,
+      plants, areas, locations, userInterfaces, interfaceInstances, matrixData, matrixShownInstances,
+      ioRacks, ioSlots, ioEntries, tasks, taskNotes, taskAutoGen, alarms, noteItems, noteFolders,
+      projectDescription, projectJobNo, customerName, customerSite, customerContact, projectVariations
+    } = get()
     return {
       version: PROJECT_VERSION,
       name: projectName,
+      description: projectDescription || undefined,
+      projectJobNo: projectJobNo || undefined,
+      customerName: customerName || undefined,
+      customerSite: customerSite || undefined,
+      customerContact: customerContact || undefined,
+      projectVariations: projectVariations.length > 0 ? projectVariations : undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       tabs,

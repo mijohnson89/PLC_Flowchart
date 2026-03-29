@@ -1,9 +1,11 @@
 import * as XLSX from 'xlsx'
 import { useDiagramStore } from '../store/diagramStore'
+import { appendDuluxIOScheduleSheets } from './ioScheduleExcel'
 import type {
   DiagramTab, UserInterface, InterfaceInstance, InterfaceField,
   IORack, IOSlot, IOEntry, InterfaceType, MatrixData
 } from '../types'
+import { formatStepStateLabel } from './stepStateVisual'
 
 type Row = Record<string, string | number | boolean | undefined>
 
@@ -145,11 +147,14 @@ function buildTabMatrixSheet(
     }
   }
 
+  const customStates = tab.flowStates ?? []
   const rows: Row[] = stepNodes.map((node) => {
     const row: Row = {
       'Step #': node.data.stepNumber ?? '',
       'Step': node.data.label ?? '',
-      'PackML State': node.data.packMLState ?? ''
+      'State': node.data.packMLState
+        ? formatStepStateLabel(node.data.packMLState, customStates)
+        : ''
     }
     for (const col of columns) {
       const header = `${col.instanceName}.${col.fieldName}`
@@ -208,6 +213,16 @@ export function exportToExcel(): string {
     wb,
     buildIOTableSheet(ioRacks, ioSlots, ioEntries, interfaceInstances, userInterfaces),
     ioName
+  )
+
+  appendDuluxIOScheduleSheets(
+    wb,
+    usedNames,
+    ioRacks,
+    ioSlots,
+    ioEntries,
+    interfaceInstances,
+    userInterfaces
   )
 
   // One tab per flowchart with its C&E matrix

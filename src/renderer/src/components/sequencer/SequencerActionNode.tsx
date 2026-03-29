@@ -1,6 +1,5 @@
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
-import type { PackMLState } from '../../types'
 import { PackMLBadge } from '../MatrixView'
 
 const DEFAULT_ACCENT = '#0ea5e9'
@@ -29,7 +28,7 @@ export function SequencerActionNode({
   /** Step description (body text). */
   description?: string
   subtitle?: string
-  packMLState?: PackMLState
+  packMLState?: string
   phaseColors?: string[]
   overviewHeight?: number
 }>) {

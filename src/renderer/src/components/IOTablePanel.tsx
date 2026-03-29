@@ -5,6 +5,11 @@ import {
 } from 'lucide-react'
 import { useDiagramStore } from '../store/diagramStore'
 import type { IOEntry, IOType, IORack, IOSlot } from '../types'
+import {
+  parseIOScheduleWorkbook,
+  applyIOScheduleSheets,
+  buildIOScheduleWorkbook
+} from '../utils/ioScheduleExcel'
 import { uid } from '../utils/uid'
 
 const IO_TYPES: IOType[] = ['DI', 'DO', 'AI', 'AO', 'RTD', 'TC', '']
@@ -254,6 +259,13 @@ function LinkedInstanceSelect({
   )
 }
 
+/** IO schedule / Dulux import uses `rackNum-slotNum` (matches Excel Rack + Slot columns). */
+function slotLabelFromSchedule(slot: IOSlot, orderIndex: number): string {
+  const m = /^(\d+)\s*-\s*(\d+)$/.exec(slot.name.trim())
+  if (m) return m[2]
+  return String(orderIndex)
+}
+
 // ── Slot section ─────────────────────────────────────────────────────────────
 
 function SlotSection({
@@ -320,8 +332,8 @@ function SlotSection({
           }
         </button>
         <Cpu size={12} className="text-indigo-400 flex-shrink-0" />
-        <span className="text-[11px] font-bold text-indigo-600 tabular-nums w-12 flex-shrink-0">
-          Slot {slotIndex}
+        <span className="text-[11px] font-bold text-indigo-600 tabular-nums min-w-[2.75rem] flex-shrink-0">
+          Slot {slotLabelFromSchedule(slot, slotIndex)}
         </span>
         {renaming ? (
           <InlineRename
@@ -644,6 +656,9 @@ function RackSection({
 // ── Main panel ───────────────────────────────────────────────────────────────
 
 export function IOTablePanel() {
+  const projectName = useDiagramStore((s) => s.projectName)
+  const userInterfaces = useDiagramStore((s) => s.userInterfaces)
+  const interfaceInstances = useDiagramStore((s) => s.interfaceInstances)
   const ioRacks = useDiagramStore((s) => s.ioRacks)
   const ioSlots = useDiagramStore((s) => s.ioSlots)
   const ioEntries = useDiagramStore((s) => s.ioEntries)
@@ -736,13 +751,45 @@ export function IOTablePanel() {
     URL.revokeObjectURL(url)
   }, [ioRacks, ioSlots, ioEntries, slotsByRack])
 
-  const handleImportCSV = useCallback(() => {
+  const handleExportIOScheduleExcel = useCallback(async () => {
+    const base64 = buildIOScheduleWorkbook(
+      ioRacks,
+      ioSlots,
+      ioEntries,
+      interfaceInstances,
+      userInterfaces
+    )
+    const name = `${projectName || 'project'}-IO-Schedule.xlsx`
+    try {
+      await window.api.exportExcel(base64, name)
+    } catch (err) {
+      console.error('[IO Schedule Excel export]', err)
+    }
+  }, [ioRacks, ioSlots, ioEntries, interfaceInstances, userInterfaces, projectName])
+
+  const handleImportIOFile = useCallback(() => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.csv'
+    input.accept = '.csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     input.onchange = async (ev) => {
       const file = (ev.target as HTMLInputElement).files?.[0]
       if (!file) return
+      const lower = file.name.toLowerCase()
+
+      if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        const buf = await file.arrayBuffer()
+        const result = parseIOScheduleWorkbook(buf)
+        if (result.sheets.length === 0) {
+          window.alert(result.errors.join('\n') || 'No IO schedule data found in this workbook.')
+          return
+        }
+        const replace = window.confirm(
+          'Replace all existing IO racks, slots, and channels?\n\nOK = Replace everything\nCancel = Merge into existing IO (match by panel, slot, and channel; updates existing rows)'
+        )
+        applyIOScheduleSheets(result.sheets, replace, () => useDiagramStore.getState())
+        return
+      }
+
       const text = await file.text()
       const lines = text.split('\n').filter(Boolean)
       if (lines.length < 2) return
@@ -849,9 +896,9 @@ export function IOTablePanel() {
         <div className="w-px h-5 bg-gray-200 mx-1" />
 
         <button
-          onClick={handleImportCSV}
+          onClick={handleImportIOFile}
           className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-          title="Import from CSV"
+          title="Import CSV or Excel (Dulux-style IO schedule)"
         >
           <Upload size={11} /> Import
         </button>
@@ -860,7 +907,14 @@ export function IOTablePanel() {
           className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
           title="Export to CSV"
         >
-          <Download size={11} /> Export
+          <Download size={11} /> CSV
+        </button>
+        <button
+          onClick={handleExportIOScheduleExcel}
+          className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          title="Export Excel (Dulux-style IO schedule, one sheet per panel)"
+        >
+          <Download size={11} /> Excel
         </button>
 
         <span className="text-[10px] text-gray-400 tabular-nums ml-1">
@@ -887,10 +941,10 @@ export function IOTablePanel() {
                 <Server size={13} /> Add First Rack
               </button>
               <button
-                onClick={handleImportCSV}
+                onClick={handleImportIOFile}
                 className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors"
               >
-                <Upload size={13} /> Import CSV
+                <Upload size={13} /> Import CSV / Excel
               </button>
             </div>
           </div>

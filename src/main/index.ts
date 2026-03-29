@@ -50,6 +50,7 @@ function buildMenu(win: BrowserWindow): void {
       submenu: [
         { label: 'New', accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('menu-new') },
         { label: 'Open...', accelerator: 'CmdOrCtrl+O', click: () => win.webContents.send('menu-open') },
+        { label: 'Import L5K...', click: () => win.webContents.send('menu-import-l5k') },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => win.webContents.send('menu-save') },
         { label: 'Save As...', accelerator: 'CmdOrCtrl+Shift+S', click: () => win.webContents.send('menu-save-as') },
@@ -107,15 +108,26 @@ app.on('window-all-closed', () => {
 
 // ── IPC handlers ────────────────────────────────────────────────────────────
 
-ipcMain.handle('dialog:save', async (_, { content, defaultName }) => {
-  const { filePath } = await dialog.showSaveDialog({
-    defaultPath: defaultName ?? 'diagram.plcd',
-    filters: [{ name: 'PLC Diagram', extensions: ['plcd'] }]
-  })
+ipcMain.handle('dialog:save', async (_, { content, defaultName, targetPath }) => {
+  let filePath: string | undefined
+  if (typeof targetPath === 'string' && targetPath.trim() !== '') {
+    filePath = targetPath.trim()
+  } else {
+    const result = await dialog.showSaveDialog({
+      defaultPath: defaultName ?? 'diagram.plcd',
+      filters: [{ name: 'PLC Diagram', extensions: ['plcd'] }]
+    })
+    filePath = result.filePath
+  }
   if (!filePath) return { success: false }
-  writeFileSync(filePath, JSON.stringify(content, null, 2), 'utf-8')
-  currentProjectPath = filePath
-  return { success: true, filePath }
+  try {
+    writeFileSync(filePath, JSON.stringify(content, null, 2), 'utf-8')
+    currentProjectPath = filePath
+    return { success: true, filePath }
+  } catch (err) {
+    console.error('[dialog:save]', err)
+    return { success: false }
+  }
 })
 
 ipcMain.handle('dialog:open', async () => {
@@ -127,6 +139,22 @@ ipcMain.handle('dialog:open', async () => {
   const raw = readFileSync(filePaths[0], 'utf-8')
   currentProjectPath = filePaths[0]
   return { success: true, content: JSON.parse(raw), filePath: filePaths[0] }
+})
+
+ipcMain.handle('dialog:import-l5k', async () => {
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    filters: [{ name: 'Studio 5000 L5K', extensions: ['l5k'] }],
+    properties: ['openFile']
+  })
+  if (canceled || !filePaths[0]) return { success: false }
+  const filePath = filePaths[0]
+  if (!/\.l5k$/i.test(filePath)) return { success: false }
+  try {
+    const text = readFileSync(filePath, 'utf-8')
+    return { success: true, text, fileName: basename(filePath) }
+  } catch {
+    return { success: false }
+  }
 })
 
 // ── Global Interface Library ─────────────────────────────────────────────────
