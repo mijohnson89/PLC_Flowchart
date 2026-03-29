@@ -403,7 +403,12 @@ export interface SketchStrokeStyle {
   strokeWidth: number
 }
 
-export interface SketchShapeRect extends SketchStrokeStyle {
+/** Shapes sharing the same `groupId` select and move together until ungrouped. */
+export interface SketchShapeGrouping {
+  groupId?: string
+}
+
+export interface SketchShapeRect extends SketchStrokeStyle, SketchShapeGrouping {
   id: string
   kind: 'rect'
   x: number
@@ -416,7 +421,7 @@ export interface SketchShapeRect extends SketchStrokeStyle {
   fontSize?: number
 }
 
-export interface SketchShapeEllipse extends SketchStrokeStyle {
+export interface SketchShapeEllipse extends SketchStrokeStyle, SketchShapeGrouping {
   id: string
   kind: 'ellipse'
   x: number
@@ -428,7 +433,7 @@ export interface SketchShapeEllipse extends SketchStrokeStyle {
   fontSize?: number
 }
 
-export interface SketchShapeLine extends SketchStrokeStyle {
+export interface SketchShapeLine extends SketchStrokeStyle, SketchShapeGrouping {
   id: string
   kind: 'line'
   x1: number
@@ -438,14 +443,14 @@ export interface SketchShapeLine extends SketchStrokeStyle {
   fill: 'none'
 }
 
-export interface SketchShapePolyline extends SketchStrokeStyle {
+export interface SketchShapePolyline extends SketchStrokeStyle, SketchShapeGrouping {
   id: string
   kind: 'polyline'
   points: { x: number; y: number }[]
   fill: 'none'
 }
 
-export interface SketchShapeText extends SketchStrokeStyle {
+export interface SketchShapeText extends SketchStrokeStyle, SketchShapeGrouping {
   id: string
   kind: 'text'
   x: number

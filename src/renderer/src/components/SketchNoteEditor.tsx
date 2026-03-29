@@ -4,6 +4,7 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+  Group, Ungroup,
 } from 'lucide-react'
 import { createEmptySketchDocument, type SketchDocument, type SketchShape } from '../types'
 import { uid } from '../utils/uid'
@@ -83,6 +84,40 @@ function findTopShapeInIds(shapes: SketchShape[], x: number, y: number, allow: S
     if (allow.has(s.id) && hitTestShape(s, x, y)) return s.id
   }
   return null
+}
+
+/** Every shape that shares a `groupId` with any id in `seedIds`, in stack order. */
+function expandGroupCohesion(shapes: SketchShape[], seedIds: string[]): string[] {
+  const gids = new Set<string>()
+  for (const id of seedIds) {
+    const s = shapes.find((z) => z.id === id)
+    if (s?.groupId) gids.add(s.groupId)
+  }
+  const out = new Set(seedIds)
+  if (gids.size > 0) {
+    for (const s of shapes) {
+      if (s.groupId && gids.has(s.groupId)) out.add(s.id)
+    }
+  }
+  return shapes.filter((s) => out.has(s.id)).map((s) => s.id)
+}
+
+function groupShapes(shapes: SketchShape[], ids: string[]): SketchShape[] {
+  if (ids.length < 2) return shapes
+  const idSet = new Set(ids)
+  const gid = uid('grp')
+  return shapes.map((s) => (idSet.has(s.id) ? { ...s, groupId: gid } : s))
+}
+
+function ungroupShapes(shapes: SketchShape[], ids: string[]): SketchShape[] {
+  const gids = new Set<string>()
+  for (const s of shapes) {
+    if (ids.includes(s.id) && s.groupId) gids.add(s.groupId)
+  }
+  if (gids.size === 0) return shapes
+  return shapes.map((s) =>
+    s.groupId && gids.has(s.groupId) ? { ...s, groupId: undefined } : s
+  )
 }
 
 function shapeBBox(s: SketchShape) {
@@ -502,7 +537,16 @@ export function SketchNoteEditor({
       if (e.shiftKey) {
         const id = findTopShapeAt(doc.shapes, x, y)
         if (id) {
-          setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]))
+          const toggleBlock = (() => {
+            const s = doc.shapes.find((z) => z.id === id)
+            if (!s?.groupId) return [id]
+            return doc.shapes.filter((z) => z.groupId === s.groupId).map((z) => z.id)
+          })()
+          setSelectedIds((prev) => {
+            const allIn = toggleBlock.every((i) => prev.includes(i))
+            if (allIn) return prev.filter((p) => !toggleBlock.includes(p))
+            return [...new Set([...prev, ...toggleBlock])]
+          })
           dragRef.current = null
           pendingEmptyDown.current = null
           marqueeLiveRef.current = null
@@ -514,7 +558,7 @@ export function SketchNoteEditor({
       }
 
       const singlePrimary = selectedIds.length === 1 ? doc.shapes.find((s) => s.id === selectedIds[0]) : null
-      if (selectedIds.length === 1 && singlePrimary?.kind === 'line') {
+      if (selectedIds.length === 1 && !singlePrimary?.groupId && singlePrimary?.kind === 'line') {
         const ln = singlePrimary
         if (nearPoint(x, y, ln.x1, ln.y1, 9)) {
           dragRef.current = { type: 'lineEnd', id: ln.id, end: 1 }
@@ -529,7 +573,7 @@ export function SketchNoteEditor({
           return
         }
       }
-      if (selectedIds.length === 1 && singlePrimary && (singlePrimary.kind === 'rect' || singlePrimary.kind === 'ellipse')) {
+      if (selectedIds.length === 1 && !singlePrimary?.groupId && singlePrimary && (singlePrimary.kind === 'rect' || singlePrimary.kind === 'ellipse')) {
         const handles = cornerHandles(singlePrimary)
         if (handles) {
           const c = hitHandle(handles, x, y)
@@ -566,14 +610,24 @@ export function SketchNoteEditor({
 
       const id = findTopShapeAt(doc.shapes, x, y)
       if (id) {
-        setSelectedIds([id])
-        const s = doc.shapes.find((sh) => sh.id === id)!
-        dragRef.current = {
-          type: 'translate',
-          id,
-          mx0: x,
-          my0: y,
-          snapshot: JSON.parse(JSON.stringify(s)) as SketchShape,
+        const cohesive = expandGroupCohesion(doc.shapes, [id])
+        setSelectedIds(cohesive)
+        if (cohesive.length > 1) {
+          const snapshots: Record<string, SketchShape> = {}
+          for (const cid of cohesive) {
+            const sh = doc.shapes.find((s) => s.id === cid)
+            if (sh) snapshots[cid] = JSON.parse(JSON.stringify(sh)) as SketchShape
+          }
+          dragRef.current = { type: 'translateMulti', mx0: x, my0: y, snapshots }
+        } else {
+          const s = doc.shapes.find((sh) => sh.id === id)!
+          dragRef.current = {
+            type: 'translate',
+            id,
+            mx0: x,
+            my0: y,
+            snapshot: JSON.parse(JSON.stringify(s)) as SketchShape,
+          }
         }
         pendingEmptyDown.current = null
         marqueeLiveRef.current = null
@@ -779,9 +833,9 @@ export function SketchNoteEditor({
     if (live) {
       const picked = idsInMarquee(doc.shapes, live.x0, live.y0, live.x1, live.y1)
       if (live.additive) {
-        setSelectedIds((prev) => [...new Set([...prev, ...picked])])
+        setSelectedIds((prev) => expandGroupCohesion(doc.shapes, [...new Set([...prev, ...picked])]))
       } else {
-        setSelectedIds(picked)
+        setSelectedIds(expandGroupCohesion(doc.shapes, picked))
       }
       marqueeLiveRef.current = null
       setMarquee(null)
@@ -827,6 +881,21 @@ export function SketchNoteEditor({
     if (selectedIds.length < 3) return
     pushDoc({ ...doc, shapes: distributeSelectedShapes(doc.shapes, selectedIds, axis) })
   }
+
+  const selectionTouchesGroup = useMemo(
+    () => selectedIds.some((id) => !!doc.shapes.find((s) => s.id === id)?.groupId),
+    [doc.shapes, selectedIds]
+  )
+
+  const runGroup = useCallback(() => {
+    if (tool !== 'select' || selectedIds.length < 2) return
+    pushDoc({ ...doc, shapes: groupShapes(doc.shapes, selectedIds) })
+  }, [tool, selectedIds, doc, pushDoc])
+
+  const runUngroup = useCallback(() => {
+    if (tool !== 'select' || !selectionTouchesGroup) return
+    pushDoc({ ...doc, shapes: ungroupShapes(doc.shapes, selectedIds) })
+  }, [tool, selectionTouchesGroup, selectedIds, doc, pushDoc])
 
   const gridLines = useMemo(() => {
     const lines: React.ReactNode[] = []
@@ -931,6 +1000,26 @@ export function SketchNoteEditor({
             className="w-12 text-xs border border-gray-200 rounded px-1 py-0.5"
           />
         </label>
+        {tool === 'select' && (
+          <div className="flex items-center gap-0.5 border-l border-gray-200 pl-2 ml-1">
+            <ToolbarBtn
+              title="Group — selected objects move and select together"
+              onClick={runGroup}
+            >
+              <span className={selectedIds.length < 2 ? 'opacity-35' : ''}>
+                <Group size={14} />
+              </span>
+            </ToolbarBtn>
+            <ToolbarBtn
+              title="Ungroup — detach grouped objects"
+              onClick={runUngroup}
+            >
+              <span className={!selectionTouchesGroup ? 'opacity-35' : ''}>
+                <Ungroup size={14} />
+              </span>
+            </ToolbarBtn>
+          </div>
+        )}
         {tool === 'select' && selectedIds.length >= 2 && (
           <div className="flex items-center gap-0.5 border-l border-gray-200 pl-2 ml-1 flex-wrap">
             <span className="text-[9px] text-gray-400 uppercase tracking-wide mr-1">Align</span>
@@ -1279,7 +1368,7 @@ export function SketchNoteEditor({
         </svg>
       </div>
       <p className="text-[10px] text-gray-400 px-3 py-1 border-t border-gray-100 flex-shrink-0">
-        Drag on empty canvas to box-select; Shift+click toggles selection. Move a selected item in a group to drag all. Align / distribute need 2+ or 3+ objects.
+        Drag on empty canvas to box-select; Shift+click toggles a shape or whole group. Grouped objects move and select together; use Group / Ungroup in the toolbar. Align / distribute need 2+ or 3+ objects.
       </p>
     </div>
   )
