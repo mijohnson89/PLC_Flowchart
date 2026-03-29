@@ -35,6 +35,16 @@ function clampRectCornerRadius(r: number | undefined, width: number, height: num
   return Math.min(raw, cap)
 }
 
+/** From fixed corner (x0,y0), snap (x1,y1) so |x1-x0| === |y1-y0| (square / 45° line). */
+function shiftConstrainSquare(x0: number, y0: number, x1: number, y1: number) {
+  const dx = x1 - x0
+  const dy = y1 - y0
+  const side = Math.max(Math.abs(dx), Math.abs(dy))
+  const sx = dx >= 0 ? 1 : -1
+  const sy = dy >= 0 ? 1 : -1
+  return { x1: x0 + sx * side, y1: y0 + sy * side }
+}
+
 function clientToSvg(svg: SVGSVGElement, clientX: number, clientY: number) {
   const pt = svg.createSVGPoint()
   pt.x = clientX
@@ -856,7 +866,14 @@ export function SketchNoteEditor({
 
     if (!draft) return
     if (draft.kind === 'box' || draft.kind === 'line') {
-      setDraft({ ...draft, x1: x, y1: y })
+      let x1 = x
+      let y1 = y
+      if (e.shiftKey) {
+        const c = shiftConstrainSquare(draft.x0, draft.y0, x, y)
+        x1 = c.x1
+        y1 = c.y1
+      }
+      setDraft({ ...draft, x1, y1 })
     } else if (draft.kind === 'pen') {
       const last = draft.points[draft.points.length - 1]
       if (!last || Math.hypot(x - last.x, y - last.y) > 3) {
@@ -1480,7 +1497,7 @@ export function SketchNoteEditor({
         </svg>
       </div>
       <p className="text-[10px] text-gray-400 px-3 py-1 border-t border-gray-100 flex-shrink-0">
-        Drag on empty canvas to box-select; Shift+click toggles a shape or whole group. Grouped objects move and select together; use Group / Ungroup in the toolbar. Align / distribute need 2+ or 3+ objects.
+        Drag on empty canvas to box-select; Shift+click toggles a shape or whole group. Hold Shift while drawing a rectangle, ellipse, or line to lock equal width and height (square or 45°). Group / Ungroup in the toolbar. Align / distribute need 2+ or 3+ objects.
       </p>
     </div>
   )
