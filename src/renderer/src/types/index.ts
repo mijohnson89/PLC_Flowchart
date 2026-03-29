@@ -416,6 +416,8 @@ export interface SketchShapeRect extends SketchStrokeStyle, SketchShapeGrouping 
   width: number
   height: number
   fill: string
+  /** Rounded corners (SVG rx/ry), clamped to half the shorter side when drawn. */
+  cornerRadius?: number
   /** Centered label inside the shape */
   text?: string
   fontSize?: number

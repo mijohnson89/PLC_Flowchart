@@ -19,6 +19,22 @@ const MARQUEE_DRAG_PX = 4
 /** Visual weight for selected objects in select mode (1 = opaque). */
 const SELECTED_SHAPE_OPACITY = 0.62
 
+/** Default appearance for newly drawn sketch shapes (toolbar + new objects). */
+const SKETCH_DEFAULT_FILL = '#eef2ff'
+const SKETCH_DEFAULT_STROKE = '#6366f1'
+const SKETCH_DEFAULT_STROKE_WIDTH = 2
+const SKETCH_DEFAULT_TEXT_FILL = '#334155'
+const SKETCH_DEFAULT_RECT_CORNER = 10
+
+const SKETCH_FILTER_ID = 'sketch-shape-shadow'
+const SKETCH_CANVAS_BG_ID = 'sketch-canvas-bg'
+
+function clampRectCornerRadius(r: number | undefined, width: number, height: number): number {
+  const raw = Math.max(0, r ?? 0)
+  const cap = Math.min(width, height) / 2
+  return Math.min(raw, cap)
+}
+
 function clientToSvg(svg: SVGSVGElement, clientX: number, clientY: number) {
   const pt = svg.createSVGPoint()
   pt.x = clientX
@@ -168,10 +184,32 @@ function shapeBBox(s: SketchShape) {
 }
 
 function SelectionOutline({ shape }: { shape: SketchShape }) {
+  const pad = 3
+  if (shape.kind === 'rect') {
+    const rr = clampRectCornerRadius(shape.cornerRadius, shape.width, shape.height)
+    const ow = shape.width + pad * 2
+    const oh = shape.height + pad * 2
+    const outerR = Math.min(rr + pad * 0.6, Math.min(ow, oh) / 2)
+    return (
+      <rect
+        x={shape.x - pad}
+        y={shape.y - pad}
+        width={ow}
+        height={oh}
+        rx={outerR}
+        ry={outerR}
+        fill="rgba(99, 102, 241, 0.08)"
+        stroke="#6366f1"
+        strokeWidth={1.5}
+        strokeDasharray="6 4"
+        opacity={1}
+        pointerEvents="none"
+      />
+    )
+  }
   const b = shapeBBox(shape)
   const w = Math.max(b.maxX - b.minX, 2)
   const h = Math.max(b.maxY - b.minY, 2)
-  const pad = 3
   return (
     <rect
       x={b.minX - pad}
@@ -393,9 +431,9 @@ export function SketchNoteEditor({
   const [marquee, setMarquee] = useState<null | { x0: number; y0: number; x1: number; y1: number; additive: boolean }>(null)
   const marqueeLiveRef = useRef<null | { x0: number; y0: number; x1: number; y1: number; additive: boolean }>(null)
   const pendingEmptyDown = useRef<null | { x0: number; y0: number; additive: boolean }>(null)
-  const [fill, setFill] = useState('#fef3c7')
-  const [stroke, setStroke] = useState('#374151')
-  const [strokeWidth, setStrokeWidth] = useState(2)
+  const [fill, setFill] = useState(SKETCH_DEFAULT_FILL)
+  const [stroke, setStroke] = useState(SKETCH_DEFAULT_STROKE)
+  const [strokeWidth, setStrokeWidth] = useState(SKETCH_DEFAULT_STROKE_WIDTH)
   const [noFill, setNoFill] = useState(false)
   const [noStroke, setNoStroke] = useState(false)
 
@@ -482,9 +520,13 @@ export function SketchNoteEditor({
         text: '',
         fontSize: Math.min(18, Math.max(12, Math.round(Math.min(width, height) / 4))),
       }
+      const cornerR =
+        draft.shape === 'rect'
+          ? Math.min(SKETCH_DEFAULT_RECT_CORNER, Math.floor(Math.min(width, height) / 2))
+          : undefined
       const shape: SketchShape =
         draft.shape === 'rect'
-          ? { kind: 'rect', ...base }
+          ? { kind: 'rect', ...base, cornerRadius: cornerR }
           : { kind: 'ellipse', ...base }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
       setSelectedIds([shape.id])
@@ -667,7 +709,7 @@ export function SketchNoteEditor({
         y,
         text: 'Text',
         fontSize: 16,
-        fill: noFill ? '#374151' : fill,
+        fill: noFill ? SKETCH_DEFAULT_TEXT_FILL : fill,
         stroke: 'none',
         strokeWidth: 0,
       }
@@ -897,12 +939,12 @@ export function SketchNoteEditor({
     const lines: React.ReactNode[] = []
     for (let gx = 0; gx <= doc.width; gx += GRID) {
       lines.push(
-        <line key={`v${gx}`} x1={gx} y1={0} x2={gx} y2={doc.height} className="stroke-gray-200" strokeWidth={0.5} />
+        <line key={`v${gx}`} x1={gx} y1={0} x2={gx} y2={doc.height} stroke="#e8eaef" strokeWidth={0.65} />
       )
     }
     for (let gy = 0; gy <= doc.height; gy += GRID) {
       lines.push(
-        <line key={`h${gy}`} x1={0} y1={gy} x2={doc.width} y2={gy} className="stroke-gray-200" strokeWidth={0.5} />
+        <line key={`h${gy}`} x1={0} y1={gy} x2={doc.width} y2={gy} stroke="#e8eaef" strokeWidth={0.65} />
       )
     }
     return lines
@@ -945,7 +987,7 @@ export function SketchNoteEditor({
         </label>
         <input
           type="color"
-          value={fill.startsWith('#') && fill.length === 7 ? fill : '#fef3c7'}
+          value={fill.startsWith('#') && fill.length === 7 ? fill : SKETCH_DEFAULT_FILL}
           onChange={(e) => {
             const v = e.target.value
             setFill(v)
@@ -970,7 +1012,7 @@ export function SketchNoteEditor({
         </label>
         <input
           type="color"
-          value={stroke.startsWith('#') && stroke.length === 7 ? stroke : '#374151'}
+          value={stroke.startsWith('#') && stroke.length === 7 ? stroke : SKETCH_DEFAULT_STROKE}
           onChange={(e) => {
             const v = e.target.value
             setStroke(v)
@@ -1122,7 +1164,7 @@ export function SketchNoteEditor({
               <label className="text-[10px] text-gray-500">Color</label>
               <input
                 type="color"
-                value={primarySelected.fill.startsWith('#') && primarySelected.fill.length === 7 ? primarySelected.fill : '#374151'}
+                value={primarySelected.fill.startsWith('#') && primarySelected.fill.length === 7 ? primarySelected.fill : SKETCH_DEFAULT_TEXT_FILL}
                 onChange={(e) => updateSelected({ fill: e.target.value } as Partial<SketchShape>)}
                 className="h-7 w-8 rounded border border-amber-200"
               />
@@ -1136,7 +1178,7 @@ export function SketchNoteEditor({
                 value={
                   primarySelected.fill !== 'none' && primarySelected.fill.startsWith('#') && primarySelected.fill.length === 7
                     ? primarySelected.fill
-                    : '#fef3c7'
+                    : SKETCH_DEFAULT_FILL
                 }
                 onChange={(e) => updateSelected({ fill: e.target.value } as Partial<SketchShape>)}
                 disabled={primarySelected.fill === 'none'}
@@ -1148,7 +1190,7 @@ export function SketchNoteEditor({
                 value={
                   primarySelected.stroke !== 'none' && primarySelected.stroke.startsWith('#') && primarySelected.stroke.length === 7
                     ? primarySelected.stroke
-                    : '#374151'
+                    : SKETCH_DEFAULT_STROKE
                 }
                 onChange={(e) => updateSelected({ stroke: e.target.value } as Partial<SketchShape>)}
                 disabled={primarySelected.stroke === 'none'}
@@ -1163,29 +1205,71 @@ export function SketchNoteEditor({
                 onChange={(e) => updateSelected({ strokeWidth: Number(e.target.value) || 0 } as Partial<SketchShape>)}
                 className="w-12 text-xs border border-amber-200 rounded px-1 py-1"
               />
+              {primarySelected.kind === 'rect' && (
+                <>
+                  <label className="text-[10px] text-gray-500 ml-2 shrink-0" title="Corner radius">
+                    Rnd
+                  </label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, Math.min(80, Math.floor(Math.min(primarySelected.width, primarySelected.height) / 2)))}
+                    value={clampRectCornerRadius(primarySelected.cornerRadius, primarySelected.width, primarySelected.height)}
+                    onChange={(e) =>
+                      updateSelected({ cornerRadius: Number(e.target.value) } as Partial<SketchShape>)
+                    }
+                    className="w-20 h-1.5 accent-indigo-600 cursor-pointer"
+                    title="Corner radius"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={primarySelected.cornerRadius ?? 0}
+                    onChange={(e) => {
+                      const cap = Math.floor(Math.min(primarySelected.width, primarySelected.height) / 2)
+                      const v = Math.min(cap, Math.max(0, Number(e.target.value) || 0))
+                      updateSelected({ cornerRadius: v } as Partial<SketchShape>)
+                    }}
+                    className="w-11 text-xs border border-amber-200 rounded px-1 py-1"
+                    title="Corner radius (px)"
+                  />
+                </>
+              )}
             </>
           )}
         </div>
       )}
 
-      <div className="flex-1 overflow-auto min-h-0 bg-slate-100">
+      <div className="flex-1 overflow-auto min-h-0 bg-slate-50/90">
         <svg
           ref={svgRef}
           width={doc.width}
           height={doc.height}
-          className="bg-white shadow-md block touch-none"
+          className="block touch-none rounded-sm shadow-[0_1px_4px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80"
           style={{ cursor: tool === 'select' ? (marquee ? 'crosshair' : 'default') : 'crosshair' }}
           onMouseDown={onSvgDown}
           onMouseMove={onSvgMove}
           onMouseUp={onSvgUp}
           onMouseLeave={onSvgLeave}
         >
-          <g className="opacity-60">{gridLines}</g>
+          <defs>
+            <linearGradient id={SKETCH_CANVAS_BG_ID} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#fbfcfe" />
+              <stop offset="100%" stopColor="#f1f5f9" />
+            </linearGradient>
+            <filter id={SKETCH_FILTER_ID} x="-35%" y="-35%" width="170%" height="170%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#0f172a" floodOpacity="0.12" />
+            </filter>
+          </defs>
+          <rect width={doc.width} height={doc.height} fill={`url(#${SKETCH_CANVAS_BG_ID})`} />
+          <g className="opacity-[0.55]">{gridLines}</g>
           {doc.shapes.map((s) => {
             const isSel = selectedSet.has(s.id) && tool === 'select'
             const dim = isSel ? SELECTED_SHAPE_OPACITY : 1
             const key = { key: s.id }
             if (s.kind === 'rect') {
+              const rr = clampRectCornerRadius(s.cornerRadius, s.width, s.height)
               return (
                 <g {...key}>
                   <g opacity={dim}>
@@ -1194,9 +1278,13 @@ export function SketchNoteEditor({
                       y={s.y}
                       width={s.width}
                       height={s.height}
+                      rx={rr}
+                      ry={rr}
                       fill={s.fill}
                       stroke={s.stroke}
                       strokeWidth={s.strokeWidth}
+                      strokeLinejoin="round"
+                      filter={`url(#${SKETCH_FILTER_ID})`}
                     />
                     {(s.text?.trim() || isSel) && (
                       <text
@@ -1204,8 +1292,10 @@ export function SketchNoteEditor({
                         y={s.y + s.height / 2}
                         textAnchor="middle"
                         dominantBaseline="middle"
-                        fill={s.stroke !== 'none' ? s.stroke : '#111827'}
+                        fill={s.stroke !== 'none' ? s.stroke : '#1e293b'}
                         fontSize={s.fontSize ?? 14}
+                        fontFamily='system-ui, "Segoe UI", Roboto, sans-serif'
+                        fontWeight={500}
                         style={{ pointerEvents: 'none' }}
                       >
                         {s.text || (isSel ? '…' : '')}
@@ -1224,15 +1314,26 @@ export function SketchNoteEditor({
               return (
                 <g {...key}>
                   <g opacity={dim}>
-                    <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s.fill} stroke={s.stroke} strokeWidth={s.strokeWidth} />
+                    <ellipse
+                      cx={cx}
+                      cy={cy}
+                      rx={rx}
+                      ry={ry}
+                      fill={s.fill}
+                      stroke={s.stroke}
+                      strokeWidth={s.strokeWidth}
+                      filter={`url(#${SKETCH_FILTER_ID})`}
+                    />
                     {(s.text?.trim() || isSel) && (
                       <text
                         x={cx}
                         y={cy}
                         textAnchor="middle"
                         dominantBaseline="middle"
-                        fill={s.stroke !== 'none' ? s.stroke : '#111827'}
+                        fill={s.stroke !== 'none' ? s.stroke : '#1e293b'}
                         fontSize={s.fontSize ?? 14}
+                        fontFamily='system-ui, "Segoe UI", Roboto, sans-serif'
+                        fontWeight={500}
                         style={{ pointerEvents: 'none' }}
                       >
                         {s.text || (isSel ? '…' : '')}
@@ -1254,6 +1355,8 @@ export function SketchNoteEditor({
                     stroke={s.stroke}
                     strokeWidth={s.strokeWidth}
                     fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                     opacity={dim}
                   />
                   {isSel && <SelectionOutline shape={s} />}
@@ -1286,6 +1389,8 @@ export function SketchNoteEditor({
                   stroke={s.stroke === 'none' ? undefined : s.stroke}
                   strokeWidth={s.stroke === 'none' ? 0 : s.strokeWidth}
                   fontSize={s.fontSize}
+                  fontFamily='system-ui, "Segoe UI", Roboto, sans-serif'
+                  fontWeight={500}
                   opacity={dim}
                   style={{ pointerEvents: 'none' }}
                 >
@@ -1295,19 +1400,29 @@ export function SketchNoteEditor({
               </g>
             )
           })}
-          {draft?.kind === 'box' && (
-            <rect
-              x={Math.min(draft.x0, draft.x1)}
-              y={Math.min(draft.y0, draft.y1)}
-              width={Math.abs(draft.x1 - draft.x0)}
-              height={Math.abs(draft.y1 - draft.y0)}
-              fill={styleFill}
-              fillOpacity={0.35}
-              stroke={styleStroke}
-              strokeWidth={styleW}
-              strokeDasharray="6 4"
-            />
-          )}
+          {draft?.kind === 'box' && (() => {
+            const bx = Math.min(draft.x0, draft.x1)
+            const by = Math.min(draft.y0, draft.y1)
+            const bw = Math.abs(draft.x1 - draft.x0)
+            const bh = Math.abs(draft.y1 - draft.y0)
+            const pr = draft.shape === 'rect' ? Math.min(14, Math.min(bw, bh) / 3) : 0
+            return (
+              <rect
+                x={bx}
+                y={by}
+                width={bw}
+                height={bh}
+                rx={pr}
+                ry={pr}
+                fill={styleFill}
+                fillOpacity={0.38}
+                stroke={styleStroke}
+                strokeWidth={styleW}
+                strokeDasharray="6 4"
+                strokeLinejoin="round"
+              />
+            )
+          })()}
           {draft?.kind === 'line' && (
             <line
               x1={draft.x0}
@@ -1317,6 +1432,7 @@ export function SketchNoteEditor({
               stroke={styleStroke}
               strokeWidth={Math.max(1, styleW || 1)}
               strokeDasharray="6 4"
+              strokeLinecap="round"
             />
           )}
           {draft?.kind === 'pen' && draft.points.length >= 2 && (
