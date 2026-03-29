@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   MousePointer2, Square, Circle, Minus, Pencil, Type, Trash2,
+  AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
 } from 'lucide-react'
 import { createEmptySketchDocument, type SketchDocument, type SketchShape } from '../types'
 import { uid } from '../utils/uid'
@@ -11,6 +14,7 @@ const GRID = 24
 const HIT_LINE = 10
 const MIN_DRAW = 4
 const MIN_POLY = 2
+const MARQUEE_DRAG_PX = 4
 
 function clientToSvg(svg: SVGSVGElement, clientX: number, clientY: number) {
   const pt = svg.createSVGPoint()
@@ -71,6 +75,171 @@ function findTopShapeAt(shapes: SketchShape[], x: number, y: number): string | n
   return null
 }
 
+function findTopShapeInIds(shapes: SketchShape[], x: number, y: number, allow: Set<string>): string | null {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i]
+    if (allow.has(s.id) && hitTestShape(s, x, y)) return s.id
+  }
+  return null
+}
+
+function shapeBBox(s: SketchShape) {
+  switch (s.kind) {
+    case 'rect':
+    case 'ellipse':
+      return {
+        minX: s.x,
+        minY: s.y,
+        maxX: s.x + s.width,
+        maxY: s.y + s.height,
+        cx: s.x + s.width / 2,
+        cy: s.y + s.height / 2,
+      }
+    case 'line':
+      return {
+        minX: Math.min(s.x1, s.x2),
+        minY: Math.min(s.y1, s.y2),
+        maxX: Math.max(s.x1, s.x2),
+        maxY: Math.max(s.y1, s.y2),
+        cx: (s.x1 + s.x2) / 2,
+        cy: (s.y1 + s.y2) / 2,
+      }
+    case 'polyline': {
+      const xs = s.points.map((p) => p.x)
+      const ys = s.points.map((p) => p.y)
+      const minX = Math.min(...xs)
+      const maxX = Math.max(...xs)
+      const minY = Math.min(...ys)
+      const maxY = Math.max(...ys)
+      return { minX, minY, maxX, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 }
+    }
+    case 'text': {
+      const w = Math.max(8, s.text.length * s.fontSize * 0.55)
+      const h = s.fontSize * 1.25
+      return {
+        minX: s.x,
+        minY: s.y - h,
+        maxX: s.x + w,
+        maxY: s.y + 4,
+        cx: s.x + w / 2,
+        cy: s.y - h / 2 + 2,
+      }
+    }
+    default:
+      return { minX: 0, minY: 0, maxX: 0, maxY: 0, cx: 0, cy: 0 }
+  }
+}
+
+function marqueeIntersectsBBox(
+  mx0: number,
+  my0: number,
+  mx1: number,
+  my1: number,
+  b: ReturnType<typeof shapeBBox>
+) {
+  const rx0 = Math.min(mx0, mx1)
+  const rx1 = Math.max(mx0, mx1)
+  const ry0 = Math.min(my0, my1)
+  const ry1 = Math.max(my0, my1)
+  return !(b.maxX < rx0 || b.minX > rx1 || b.maxY < ry0 || b.minY > ry1)
+}
+
+function idsInMarquee(shapes: SketchShape[], mx0: number, my0: number, mx1: number, my1: number): string[] {
+  return shapes.filter((s) => marqueeIntersectsBBox(mx0, my0, mx1, my1, shapeBBox(s))).map((s) => s.id)
+}
+
+function translateShape(s: SketchShape, dx: number, dy: number): SketchShape {
+  if (s.kind === 'rect' || s.kind === 'ellipse') return { ...s, x: s.x + dx, y: s.y + dy }
+  if (s.kind === 'line') {
+    return { ...s, x1: s.x1 + dx, y1: s.y1 + dy, x2: s.x2 + dx, y2: s.y2 + dy }
+  }
+  if (s.kind === 'text') return { ...s, x: s.x + dx, y: s.y + dy }
+  if (s.kind === 'polyline') return { ...s, points: s.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+  return s
+}
+
+type AlignMode = 'left' | 'right' | 'centerH' | 'top' | 'bottom' | 'centerV'
+
+function alignSelectedShapes(shapes: SketchShape[], ids: string[], mode: AlignMode): SketchShape[] {
+  if (ids.length < 2) return shapes
+  const idSet = new Set(ids)
+  const boxes = shapes
+    .filter((s) => idSet.has(s.id))
+    .map((s) => ({ id: s.id, b: shapeBBox(s) }))
+  const unionMinX = Math.min(...boxes.map((x) => x.b.minX))
+  const unionMaxX = Math.max(...boxes.map((x) => x.b.maxX))
+  const unionMinY = Math.min(...boxes.map((x) => x.b.minY))
+  const unionMaxY = Math.max(...boxes.map((x) => x.b.maxY))
+  const midX = (unionMinX + unionMaxX) / 2
+  const midY = (unionMinY + unionMaxY) / 2
+  const delta = new Map<string, { dx: number; dy: number }>()
+  for (const { id, b } of boxes) {
+    let dx = 0
+    let dy = 0
+    switch (mode) {
+      case 'left':
+        dx = unionMinX - b.minX
+        break
+      case 'right':
+        dx = unionMaxX - b.maxX
+        break
+      case 'centerH':
+        dx = midX - b.cx
+        break
+      case 'top':
+        dy = unionMinY - b.minY
+        break
+      case 'bottom':
+        dy = unionMaxY - b.maxY
+        break
+      case 'centerV':
+        dy = midY - b.cy
+        break
+    }
+    delta.set(id, { dx, dy })
+  }
+  return shapes.map((s) => {
+    const d = delta.get(s.id)
+    if (!d) return s
+    return translateShape(s, d.dx, d.dy)
+  })
+}
+
+function distributeSelectedShapes(shapes: SketchShape[], ids: string[], axis: 'h' | 'v'): SketchShape[] {
+  if (ids.length < 3) return shapes
+  const ordered = ids
+    .map((id) => shapes.find((s) => s.id === id))
+    .filter((s): s is SketchShape => !!s)
+    .map((s) => ({ s, b: shapeBBox(s) }))
+  if (axis === 'h') ordered.sort((a, b) => a.b.cx - b.b.cx)
+  else ordered.sort((a, b) => a.b.cy - b.b.cy)
+
+  const first = axis === 'h' ? ordered[0].b.cx : ordered[0].b.cy
+  const last = axis === 'h' ? ordered[ordered.length - 1].b.cx : ordered[ordered.length - 1].b.cy
+  const span = last - first
+  if (Math.abs(span) < 1e-6) return shapes
+
+  const dxMap = new Map<string, number>()
+  const dyMap = new Map<string, number>()
+  ordered.forEach((it, i) => {
+    const t = i / (ordered.length - 1)
+    if (axis === 'h') {
+      const newCx = first + span * t
+      dxMap.set(it.s.id, newCx - it.b.cx)
+    } else {
+      const newCy = first + span * t
+      dyMap.set(it.s.id, newCy - it.b.cy)
+    }
+  })
+
+  return shapes.map((s) => {
+    const dx = dxMap.get(s.id) ?? 0
+    const dy = dyMap.get(s.id) ?? 0
+    if (!dx && !dy) return s
+    return translateShape(s, dx, dy)
+  })
+}
+
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
 
 function cornerHandles(s: SketchShape): { corner: Corner; x: number; y: number }[] | null {
@@ -97,6 +266,7 @@ function nearPoint(px: number, py: number, x: number, y: number, r: number) {
 
 type EditorDragState =
   | { type: 'translate'; id: string; mx0: number; my0: number; snapshot: SketchShape }
+  | { type: 'translateMulti'; mx0: number; my0: number; snapshots: Record<string, SketchShape> }
   | { type: 'resize'; id: string; corner: Corner; start: Extract<SketchShape, { kind: 'rect' | 'ellipse' }> }
   | { type: 'lineEnd'; id: string; end: 1 | 2 }
 
@@ -138,7 +308,10 @@ export function SketchNoteEditor({
   const svgRef = useRef<SVGSVGElement>(null)
 
   const [tool, setTool] = useState<SketchTool>('select')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [marquee, setMarquee] = useState<null | { x0: number; y0: number; x1: number; y1: number; additive: boolean }>(null)
+  const marqueeLiveRef = useRef<null | { x0: number; y0: number; x1: number; y1: number; additive: boolean }>(null)
+  const pendingEmptyDown = useRef<null | { x0: number; y0: number; additive: boolean }>(null)
   const [fill, setFill] = useState('#fef3c7')
   const [stroke, setStroke] = useState('#374151')
   const [strokeWidth, setStrokeWidth] = useState(2)
@@ -161,21 +334,26 @@ export function SketchNoteEditor({
     [onChange]
   )
 
-  const selected = useMemo(() => doc.shapes.find((s) => s.id === selectedId) ?? null, [doc.shapes, selectedId])
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const primarySelected = useMemo(
+    () => (selectedIds.length === 1 ? doc.shapes.find((s) => s.id === selectedIds[0]) ?? null : null),
+    [doc.shapes, selectedIds]
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && tool === 'select') {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0 && tool === 'select') {
         const t = e.target as HTMLElement
         if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
         e.preventDefault()
-        pushDoc({ ...doc, shapes: doc.shapes.filter((s) => s.id !== selectedId) })
-        setSelectedId(null)
+        const drop = new Set(selectedIds)
+        pushDoc({ ...doc, shapes: doc.shapes.filter((s) => !drop.has(s.id)) })
+        setSelectedIds([])
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [doc, selectedId, tool, pushDoc])
+  }, [doc, selectedIds, tool, pushDoc])
 
   const styleFill = noFill ? 'none' : fill
   const styleStroke = noStroke ? 'none' : stroke
@@ -207,7 +385,7 @@ export function SketchNoteEditor({
           ? { kind: 'rect', ...base }
           : { kind: 'ellipse', ...base }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
-      setSelectedId(shape.id)
+      setSelectedIds([shape.id])
       setTool('select')
       return
     }
@@ -226,7 +404,7 @@ export function SketchNoteEditor({
         strokeWidth: Math.max(1, styleW || 1),
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
-      setSelectedId(shape.id)
+      setSelectedIds([shape.id])
       setTool('select')
       return
     }
@@ -243,7 +421,7 @@ export function SketchNoteEditor({
         strokeWidth: Math.max(1, styleW || 1),
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
-      setSelectedId(shape.id)
+      setSelectedIds([shape.id])
       setTool('select')
     }
   }, [draft, doc, pushDoc, styleFill, styleStroke, styleW])
@@ -254,39 +432,74 @@ export function SketchNoteEditor({
     const { x, y } = clientToSvg(svg, e.clientX, e.clientY)
 
     if (tool === 'select') {
-      const selShape = selectedId ? doc.shapes.find((s) => s.id === selectedId) : null
-      if (selShape?.kind === 'line') {
-        const ln = selShape
+      if (e.shiftKey) {
+        const id = findTopShapeAt(doc.shapes, x, y)
+        if (id) {
+          setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]))
+          dragRef.current = null
+          pendingEmptyDown.current = null
+          marqueeLiveRef.current = null
+          setMarquee(null)
+          e.preventDefault()
+          return
+        }
+        // Shift+drag on empty canvas: additive marquee (handled below)
+      }
+
+      const singlePrimary = selectedIds.length === 1 ? doc.shapes.find((s) => s.id === selectedIds[0]) : null
+      if (selectedIds.length === 1 && singlePrimary?.kind === 'line') {
+        const ln = singlePrimary
         if (nearPoint(x, y, ln.x1, ln.y1, 9)) {
           dragRef.current = { type: 'lineEnd', id: ln.id, end: 1 }
+          pendingEmptyDown.current = null
           e.preventDefault()
           return
         }
         if (nearPoint(x, y, ln.x2, ln.y2, 9)) {
           dragRef.current = { type: 'lineEnd', id: ln.id, end: 2 }
+          pendingEmptyDown.current = null
           e.preventDefault()
           return
         }
       }
-      if (selShape && (selShape.kind === 'rect' || selShape.kind === 'ellipse')) {
-        const handles = cornerHandles(selShape)
+      if (selectedIds.length === 1 && singlePrimary && (singlePrimary.kind === 'rect' || singlePrimary.kind === 'ellipse')) {
+        const handles = cornerHandles(singlePrimary)
         if (handles) {
           const c = hitHandle(handles, x, y)
           if (c) {
             dragRef.current = {
               type: 'resize',
-              id: selShape.id,
+              id: singlePrimary.id,
               corner: c,
-              start: JSON.parse(JSON.stringify(selShape)) as Extract<SketchShape, { kind: 'rect' | 'ellipse' }>,
+              start: JSON.parse(JSON.stringify(singlePrimary)) as Extract<SketchShape, { kind: 'rect' | 'ellipse' }>,
             }
+            pendingEmptyDown.current = null
             e.preventDefault()
             return
           }
         }
       }
+
+      if (selectedIds.length > 1) {
+        const hitSel = findTopShapeInIds(doc.shapes, x, y, selectedSet)
+        if (hitSel) {
+          const snapshots: Record<string, SketchShape> = {}
+          for (const id of selectedIds) {
+            const sh = doc.shapes.find((s) => s.id === id)
+            if (sh) snapshots[id] = JSON.parse(JSON.stringify(sh)) as SketchShape
+          }
+          dragRef.current = { type: 'translateMulti', mx0: x, my0: y, snapshots }
+          pendingEmptyDown.current = null
+          marqueeLiveRef.current = null
+          setMarquee(null)
+          e.preventDefault()
+          return
+        }
+      }
+
       const id = findTopShapeAt(doc.shapes, x, y)
-      setSelectedId(id)
       if (id) {
+        setSelectedIds([id])
         const s = doc.shapes.find((sh) => sh.id === id)!
         dragRef.current = {
           type: 'translate',
@@ -295,7 +508,13 @@ export function SketchNoteEditor({
           my0: y,
           snapshot: JSON.parse(JSON.stringify(s)) as SketchShape,
         }
+        pendingEmptyDown.current = null
+        marqueeLiveRef.current = null
+        setMarquee(null)
       } else {
+        pendingEmptyDown.current = { x0: x, y0: y, additive: e.shiftKey }
+        marqueeLiveRef.current = null
+        setMarquee(null)
         dragRef.current = null
       }
       e.preventDefault()
@@ -335,7 +554,7 @@ export function SketchNoteEditor({
         strokeWidth: 0,
       }
       pushDoc({ ...doc, shapes: [...doc.shapes, shape] })
-      setSelectedId(shape.id)
+      setSelectedIds([shape.id])
       setTool('select')
       e.preventDefault()
     }
@@ -346,7 +565,56 @@ export function SketchNoteEditor({
     if (!svg) return
     const { x, y } = clientToSvg(svg, e.clientX, e.clientY)
 
+    if (tool === 'select') {
+      if (pendingEmptyDown.current && !dragRef.current) {
+        const p = pendingEmptyDown.current
+        if (Math.hypot(x - p.x0, y - p.y0) > MARQUEE_DRAG_PX) {
+          const next = { x0: p.x0, y0: p.y0, x1: x, y1: y, additive: p.additive }
+          marqueeLiveRef.current = next
+          setMarquee(next)
+          pendingEmptyDown.current = null
+        }
+      } else if (marquee) {
+        const next = { ...marquee, x1: x, y1: y }
+        marqueeLiveRef.current = next
+        setMarquee(next)
+      }
+    }
+
     const d = dragRef.current
+    if (d?.type === 'translateMulti') {
+      const dx = x - d.mx0
+      const dy = y - d.my0
+      const shapes = doc.shapes.map((s) => {
+        const snap = d.snapshots[s.id]
+        if (!snap) return s
+        if (snap.kind === 'rect' || snap.kind === 'ellipse') {
+          return { ...snap, x: snap.x + dx, y: snap.y + dy }
+        }
+        if (snap.kind === 'line') {
+          return {
+            ...snap,
+            x1: snap.x1 + dx,
+            y1: snap.y1 + dy,
+            x2: snap.x2 + dx,
+            y2: snap.y2 + dy,
+          }
+        }
+        if (snap.kind === 'text') {
+          return { ...snap, x: snap.x + dx, y: snap.y + dy }
+        }
+        if (snap.kind === 'polyline') {
+          return {
+            ...snap,
+            points: snap.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+          }
+        }
+        return s
+      })
+      pushDoc({ ...doc, shapes })
+      return
+    }
+
     if (d?.type === 'translate') {
       const dx = x - d.mx0
       const dy = y - d.my0
@@ -438,28 +706,57 @@ export function SketchNoteEditor({
 
   const onSvgUp = () => {
     dragRef.current = null
+    const live = marqueeLiveRef.current
+    if (live) {
+      const picked = idsInMarquee(doc.shapes, live.x0, live.y0, live.x1, live.y1)
+      if (live.additive) {
+        setSelectedIds((prev) => [...new Set([...prev, ...picked])])
+      } else {
+        setSelectedIds(picked)
+      }
+      marqueeLiveRef.current = null
+      setMarquee(null)
+    } else if (pendingEmptyDown.current && !pendingEmptyDown.current.additive) {
+      setSelectedIds([])
+    }
+    pendingEmptyDown.current = null
     if (draft) commitDraft()
   }
 
   const onSvgLeave = () => {
     dragRef.current = null
+    pendingEmptyDown.current = null
+    marqueeLiveRef.current = null
+    setMarquee(null)
     if (draft?.kind === 'pen') setDraft(null)
     else if (draft) commitDraft()
   }
 
   const updateSelected = useCallback(
     (patch: Partial<SketchShape>) => {
-      if (!selectedId) return
-      const shapes = doc.shapes.map((s) => (s.id === selectedId ? { ...s, ...patch } as SketchShape : s))
+      const id = primarySelected?.id
+      if (!id) return
+      const shapes = doc.shapes.map((s) => (s.id === id ? { ...s, ...patch } as SketchShape : s))
       pushDoc({ ...doc, shapes })
     },
-    [doc, selectedId, pushDoc]
+    [doc, primarySelected?.id, pushDoc]
   )
 
   const deleteSelected = () => {
-    if (!selectedId) return
-    pushDoc({ ...doc, shapes: doc.shapes.filter((s) => s.id !== selectedId) })
-    setSelectedId(null)
+    if (selectedIds.length === 0) return
+    const drop = new Set(selectedIds)
+    pushDoc({ ...doc, shapes: doc.shapes.filter((s) => !drop.has(s.id)) })
+    setSelectedIds([])
+  }
+
+  const runAlign = (mode: AlignMode) => {
+    if (selectedIds.length < 2) return
+    pushDoc({ ...doc, shapes: alignSelectedShapes(doc.shapes, selectedIds, mode) })
+  }
+
+  const runDistribute = (axis: 'h' | 'v') => {
+    if (selectedIds.length < 3) return
+    pushDoc({ ...doc, shapes: distributeSelectedShapes(doc.shapes, selectedIds, axis) })
   }
 
   const gridLines = useMemo(() => {
@@ -535,26 +832,51 @@ export function SketchNoteEditor({
             className="w-12 text-xs border border-gray-200 rounded px-1 py-0.5"
           />
         </label>
-        {selected && tool === 'select' && (
+        {tool === 'select' && selectedIds.length >= 2 && (
+          <div className="flex items-center gap-0.5 border-l border-gray-200 pl-2 ml-1 flex-wrap">
+            <span className="text-[9px] text-gray-400 uppercase tracking-wide mr-1">Align</span>
+            <ToolbarBtn title="Align left" onClick={() => runAlign('left')}><AlignHorizontalJustifyStart size={14} /></ToolbarBtn>
+            <ToolbarBtn title="Align horizontal center" onClick={() => runAlign('centerH')}><AlignHorizontalJustifyCenter size={14} /></ToolbarBtn>
+            <ToolbarBtn title="Align right" onClick={() => runAlign('right')}><AlignHorizontalJustifyEnd size={14} /></ToolbarBtn>
+            <span className="w-px h-4 bg-gray-200 mx-0.5" />
+            <ToolbarBtn title="Align top" onClick={() => runAlign('top')}><AlignVerticalJustifyStart size={14} /></ToolbarBtn>
+            <ToolbarBtn title="Align vertical center" onClick={() => runAlign('centerV')}><AlignVerticalJustifyCenter size={14} /></ToolbarBtn>
+            <ToolbarBtn title="Align bottom" onClick={() => runAlign('bottom')}><AlignVerticalJustifyEnd size={14} /></ToolbarBtn>
+            <span className="w-px h-4 bg-gray-200 mx-0.5" />
+            <ToolbarBtn
+              title="Distribute horizontally (3+ items)"
+              onClick={() => selectedIds.length >= 3 && runDistribute('h')}
+            >
+              <AlignHorizontalDistributeCenter size={14} className={selectedIds.length < 3 ? 'opacity-35' : ''} />
+            </ToolbarBtn>
+            <ToolbarBtn
+              title="Distribute vertically (3+ items)"
+              onClick={() => selectedIds.length >= 3 && runDistribute('v')}
+            >
+              <AlignVerticalDistributeCenter size={14} className={selectedIds.length < 3 ? 'opacity-35' : ''} />
+            </ToolbarBtn>
+          </div>
+        )}
+        {selectedIds.length > 0 && tool === 'select' && (
           <button
             type="button"
             onClick={deleteSelected}
             className="ml-auto flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-red-600 bg-red-50 rounded-md hover:bg-red-100"
           >
-            <Trash2 size={12} /> Delete
+            <Trash2 size={12} /> Delete{selectedIds.length > 1 ? ` (${selectedIds.length})` : ''}
           </button>
         )}
       </div>
 
-      {(selected?.kind === 'line' || selected?.kind === 'polyline') && tool === 'select' && (
+      {(primarySelected?.kind === 'line' || primarySelected?.kind === 'polyline') && tool === 'select' && (
         <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-gray-100 bg-slate-50 flex-shrink-0">
-          <span className="text-[10px] font-medium text-gray-600">{selected.kind === 'line' ? 'Line' : 'Stroke'}</span>
+          <span className="text-[10px] font-medium text-gray-600">{primarySelected.kind === 'line' ? 'Line' : 'Stroke'}</span>
           <label className="text-[10px] text-gray-500">Color</label>
           <input
             type="color"
             value={
-              selected.stroke !== 'none' && selected.stroke.startsWith('#') && selected.stroke.length === 7
-                ? selected.stroke
+              primarySelected.stroke !== 'none' && primarySelected.stroke.startsWith('#') && primarySelected.stroke.length === 7
+                ? primarySelected.stroke
                 : '#374151'
             }
             onChange={(e) => updateSelected({ stroke: e.target.value } as Partial<SketchShape>)}
@@ -565,21 +887,21 @@ export function SketchNoteEditor({
             type="number"
             min={1}
             max={32}
-            value={selected.strokeWidth}
+            value={primarySelected.strokeWidth}
             onChange={(e) => updateSelected({ strokeWidth: Number(e.target.value) || 1 } as Partial<SketchShape>)}
             className="w-12 text-xs border border-gray-200 rounded px-1 py-1"
           />
         </div>
       )}
 
-      {(selected?.kind === 'rect' || selected?.kind === 'ellipse' || selected?.kind === 'text') && tool === 'select' && (
+      {(primarySelected?.kind === 'rect' || primarySelected?.kind === 'ellipse' || primarySelected?.kind === 'text') && tool === 'select' && (
         <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-gray-100 bg-amber-50/50 flex-shrink-0">
-          {(selected.kind === 'rect' || selected.kind === 'ellipse') && (
+          {(primarySelected.kind === 'rect' || primarySelected.kind === 'ellipse') && (
             <>
               <label className="text-[10px] text-gray-600 shrink-0">Label in shape</label>
               <input
                 type="text"
-                value={selected.text ?? ''}
+                value={primarySelected.text ?? ''}
                 onChange={(e) => updateSelected({ text: e.target.value } as Partial<SketchShape>)}
                 placeholder="Optional text…"
                 className="flex-1 min-w-[120px] text-xs border border-amber-200 rounded px-2 py-1"
@@ -589,18 +911,18 @@ export function SketchNoteEditor({
                 type="number"
                 min={8}
                 max={72}
-                value={selected.fontSize ?? 14}
+                value={primarySelected.fontSize ?? 14}
                 onChange={(e) => updateSelected({ fontSize: Number(e.target.value) || 14 } as Partial<SketchShape>)}
                 className="w-14 text-xs border border-amber-200 rounded px-1 py-1"
               />
             </>
           )}
-          {selected.kind === 'text' && (
+          {primarySelected.kind === 'text' && (
             <>
               <label className="text-[10px] text-gray-600 shrink-0">Text</label>
               <input
                 type="text"
-                value={selected.text}
+                value={primarySelected.text}
                 onChange={(e) => updateSelected({ text: e.target.value } as Partial<SketchShape>)}
                 className="flex-1 min-w-[120px] text-xs border border-amber-200 rounded px-2 py-1"
               />
@@ -609,43 +931,43 @@ export function SketchNoteEditor({
                 type="number"
                 min={8}
                 max={96}
-                value={selected.fontSize}
+                value={primarySelected.fontSize}
                 onChange={(e) => updateSelected({ fontSize: Number(e.target.value) || 16 } as Partial<SketchShape>)}
                 className="w-14 text-xs border border-amber-200 rounded px-1 py-1"
               />
               <label className="text-[10px] text-gray-500">Color</label>
               <input
                 type="color"
-                value={selected.fill.startsWith('#') && selected.fill.length === 7 ? selected.fill : '#374151'}
+                value={primarySelected.fill.startsWith('#') && primarySelected.fill.length === 7 ? primarySelected.fill : '#374151'}
                 onChange={(e) => updateSelected({ fill: e.target.value } as Partial<SketchShape>)}
                 className="h-7 w-8 rounded border border-amber-200"
               />
             </>
           )}
-          {(selected.kind === 'rect' || selected.kind === 'ellipse') && (
+          {(primarySelected.kind === 'rect' || primarySelected.kind === 'ellipse') && (
             <>
               <label className="text-[10px] text-gray-500 ml-2">Fill</label>
               <input
                 type="color"
                 value={
-                  selected.fill !== 'none' && selected.fill.startsWith('#') && selected.fill.length === 7
-                    ? selected.fill
+                  primarySelected.fill !== 'none' && primarySelected.fill.startsWith('#') && primarySelected.fill.length === 7
+                    ? primarySelected.fill
                     : '#fef3c7'
                 }
                 onChange={(e) => updateSelected({ fill: e.target.value } as Partial<SketchShape>)}
-                disabled={selected.fill === 'none'}
+                disabled={primarySelected.fill === 'none'}
                 className="h-7 w-8 rounded border border-amber-200 disabled:opacity-40"
               />
               <label className="text-[10px] text-gray-500">Stroke</label>
               <input
                 type="color"
                 value={
-                  selected.stroke !== 'none' && selected.stroke.startsWith('#') && selected.stroke.length === 7
-                    ? selected.stroke
+                  primarySelected.stroke !== 'none' && primarySelected.stroke.startsWith('#') && primarySelected.stroke.length === 7
+                    ? primarySelected.stroke
                     : '#374151'
                 }
                 onChange={(e) => updateSelected({ stroke: e.target.value } as Partial<SketchShape>)}
-                disabled={selected.stroke === 'none'}
+                disabled={primarySelected.stroke === 'none'}
                 className="h-7 w-8 rounded border border-amber-200 disabled:opacity-40"
               />
               <label className="text-[10px] text-gray-500">W</label>
@@ -653,7 +975,7 @@ export function SketchNoteEditor({
                 type="number"
                 min={0}
                 max={32}
-                value={selected.strokeWidth}
+                value={primarySelected.strokeWidth}
                 onChange={(e) => updateSelected({ strokeWidth: Number(e.target.value) || 0 } as Partial<SketchShape>)}
                 className="w-12 text-xs border border-amber-200 rounded px-1 py-1"
               />
@@ -668,7 +990,7 @@ export function SketchNoteEditor({
           width={doc.width}
           height={doc.height}
           className="bg-white shadow-md block touch-none"
-          style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
+          style={{ cursor: tool === 'select' ? (marquee ? 'crosshair' : 'default') : 'crosshair' }}
           onMouseDown={onSvgDown}
           onMouseMove={onSvgMove}
           onMouseUp={onSvgUp}
@@ -676,7 +998,7 @@ export function SketchNoteEditor({
         >
           <g className="opacity-60">{gridLines}</g>
           {doc.shapes.map((s) => {
-            const isSel = s.id === selectedId && tool === 'select'
+            const isSel = selectedSet.has(s.id) && tool === 'select'
             const common = { key: s.id }
             if (s.kind === 'rect') {
               return (
@@ -798,7 +1120,7 @@ export function SketchNoteEditor({
               strokeDasharray="4 3"
             />
           )}
-          {selected && tool === 'select' && (selected.kind === 'rect' || selected.kind === 'ellipse') && cornerHandles(selected)?.map((h) => (
+          {primarySelected && selectedIds.length === 1 && tool === 'select' && (primarySelected.kind === 'rect' || primarySelected.kind === 'ellipse') && cornerHandles(primarySelected)?.map((h) => (
             <rect
               key={h.corner}
               x={h.x - 5}
@@ -810,16 +1132,29 @@ export function SketchNoteEditor({
               strokeWidth={1.5}
             />
           ))}
-          {selected && tool === 'select' && selected.kind === 'line' && (
+          {primarySelected && selectedIds.length === 1 && tool === 'select' && primarySelected.kind === 'line' && (
             <g>
-              <circle cx={selected.x1} cy={selected.y1} r={5} fill="white" stroke="#6366f1" strokeWidth={1.5} />
-              <circle cx={selected.x2} cy={selected.y2} r={5} fill="white" stroke="#6366f1" strokeWidth={1.5} />
+              <circle cx={primarySelected.x1} cy={primarySelected.y1} r={5} fill="white" stroke="#6366f1" strokeWidth={1.5} />
+              <circle cx={primarySelected.x2} cy={primarySelected.y2} r={5} fill="white" stroke="#6366f1" strokeWidth={1.5} />
             </g>
+          )}
+          {marquee && tool === 'select' && (
+            <rect
+              x={Math.min(marquee.x0, marquee.x1)}
+              y={Math.min(marquee.y0, marquee.y1)}
+              width={Math.abs(marquee.x1 - marquee.x0)}
+              height={Math.abs(marquee.y1 - marquee.y0)}
+              fill="rgba(99, 102, 241, 0.12)"
+              stroke="#6366f1"
+              strokeWidth={1}
+              strokeDasharray="4 3"
+              pointerEvents="none"
+            />
           )}
         </svg>
       </div>
       <p className="text-[10px] text-gray-400 px-3 py-1 border-t border-gray-100 flex-shrink-0">
-        Vector sketch — drag shapes to move, corners to resize boxes, line endpoints to adjust. Delete removes the selection.
+        Drag on empty canvas to box-select; Shift+click toggles selection. Move a selected item in a group to drag all. Align / distribute need 2+ or 3+ objects.
       </p>
     </div>
   )
